@@ -10444,6 +10444,14 @@ local SakuraMenuShell = (function()
         local doChipIntroRelocate = fromMenuChip and not SakuraMenuChipRelocated
 
         MainFrame.Visible = true
+        task.defer(function()
+            pcall(function()
+                local fn = getgenv().SakuraRefreshHomeLuarmorFooter
+                if type(fn) == "function" then
+                    fn()
+                end
+            end)
+        end)
         MainFrame.Size = UDim2.new(0, 0, 0, 0)
         MainFrame.ClipsDescendants = true
         Services.RunService.Heartbeat:Wait()
@@ -10604,10 +10612,35 @@ local LrmMirrorLeft = nil
 local LrmMirrorTick = nil
 
 local function luarmorReadGlobal(key)
-	local g = getgenv()
-	local v = rawget(g, key)
-	if v == nil and _G then
-		v = rawget(_G, key)
+	local function rawFrom(tbl)
+		if type(tbl) == "table" then
+			local v = rawget(tbl, key)
+			if v ~= nil then
+				return v
+			end
+		end
+		return nil
+	end
+	local v = rawFrom(getgenv())
+	if v == nil then
+		v = rawFrom(_G)
+	end
+	if v == nil and type(shared) == "table" then
+		v = rawFrom(shared)
+	end
+	if v == nil then
+		pcall(function()
+			if type(getrenv) == "function" then
+				v = rawFrom(getrenv())
+			end
+		end)
+	end
+	if v == nil then
+		pcall(function()
+			if type(getfenv) == "function" then
+				v = rawFrom(getfenv(0))
+			end
+		end)
 	end
 	return v
 end
@@ -10617,6 +10650,9 @@ local function luarmorRuntimeDetected()
 		or luarmorReadGlobal("LRM_IsUserPremium") ~= nil
 		or luarmorReadGlobal("LRM_UserNote") ~= nil
 		or luarmorReadGlobal("LRM_ScriptName") ~= nil
+		or luarmorReadGlobal("LRM_ScriptVersion") ~= nil
+		or luarmorReadGlobal("LRM_TotalExecutions") ~= nil
+		or luarmorReadGlobal("LRM_LinkedDiscordID") ~= nil
 end
 
 local function formatLuarmorDuration(sec)
@@ -10716,6 +10752,9 @@ local function refreshLuarmorStatsHud()
 	end
 
 	local raw = luarmorReadGlobal("LRM_SecondsLeft")
+	if type(raw) == "string" then
+		raw = tonumber(raw)
+	end
 	local eff = raw
 	if type(raw) == "number" and raw == raw and raw < 1e200 and raw ~= math.huge then
 		local projected = nil
@@ -10730,9 +10769,9 @@ local function refreshLuarmorStatsHud()
 	end
 
 	local kt = luarmorKeyTypeColumnText()
-	keyV.Text = string.format('"%s"', kt)
+	keyV.Text = kt
 	if type(eff) == "number" and eff == eff then
-		durV.Text = string.format('"%s"', formatLuarmorDurationVerbose(eff))
+		durV.Text = formatLuarmorDurationVerbose(eff)
 	else
 		durV.Text = "—"
 	end
