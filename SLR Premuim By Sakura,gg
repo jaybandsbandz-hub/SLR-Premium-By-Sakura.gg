@@ -18,6 +18,28 @@ local HoverSpeed = 0.08
 local function Tween(obj, props) return Services.Tween:Create(obj, TweenInfo.new(Anim.Speed, Anim.Style, Anim.Dir), props) end
 local function HoverTween(obj, props) return Services.Tween:Create(obj, TweenInfo.new(HoverSpeed, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props) end
 
+-- Vertical scroll + engine smooth wheel (clients that support SmoothScroll / SmoothScrolling).
+local function applySakuraScrollFrameFeel(scroll, opts)
+	if not scroll or scroll.ClassName ~= "ScrollingFrame" then
+		return
+	end
+	opts = opts or {}
+	if opts.direction ~= nil then
+		scroll.ScrollingDirection = opts.direction
+	elseif scroll.ScrollingDirection == Enum.ScrollingDirection.XY then
+		scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	end
+	if opts.elastic ~= nil then
+		scroll.ElasticBehavior = opts.elastic
+	end
+	pcall(function()
+		scroll.SmoothScroll = true
+	end)
+	pcall(function()
+		scroll.SmoothScrolling = true
+	end)
+end
+
 if _G.EliteHubV2_Cleanup then
     pcall(function()
         _G.EliteHubV2_Cleanup()
@@ -418,10 +440,6 @@ local HUDLayoutDefaults = {
         Size = UDim2.new(0, 225, 0, 181),
         Position = UDim2.new(1, -234, 0.5, -35),
     },
-    BuyersHUD = {
-        Size = UDim2.new(0, 225, 0, 181),
-        Position = UDim2.new(1, -234, 0.5, 155),
-    },
     StatsBarHUD = {
         Size = UDim2.new(0, 650, 0, 60),
         Position = UDim2.new(0.5, -317, 0, -53),
@@ -519,7 +537,118 @@ getgenv().HUDPopoutChaseGradients = getgenv().HUDPopoutChaseGradients or {}
 getgenv().WatermarkChaseGradients = getgenv().WatermarkChaseGradients or {}
 getgenv().WatermarkGlowStrokes = getgenv().WatermarkGlowStrokes or {}
 
-local function CreateHUD(name, titleText)
+-- Sidebar / pop-out header icons (must exist before `CreateHUD` runs).
+local TAB_ICONS = {
+    ["Home"] = "🏠",
+    ["Aim"] = "🎯",
+    ["Visual"] = "👁️",
+    ["Player"] = "🧍",
+    ["Vehicle"] = "🚗",
+    ["Crypto"] = "💰",
+    ["Servers"] = "🌐",
+    ["Scanner"] = "🔍",
+    ["Instant UI"] = "⚡",
+    ["Settings"] = "⚙️",
+    ["Spectate"] = "📹",
+    ["Whitelist"] = "🛡️",
+}
+
+getgenv().TopBarChaseGradients = getgenv().TopBarChaseGradients or {}
+getgenv().ContentChaseGradients = getgenv().ContentChaseGradients or {}
+getgenv().TabIconChaseGradients = getgenv().TabIconChaseGradients or {}
+getgenv().MenuChaseGlowStrokes = getgenv().MenuChaseGlowStrokes or {}
+
+-- outerScale: MainFrame-style halo, scaled. Default ~0.16 for a bit more bloom than 0.145.
+local function addChasingMenuGlow(target, destGradients, chaseThickness, strong, outerScale)
+    if not target or not destGradients then
+        return
+    end
+    strong = strong == true
+    local oScale = outerScale
+    if oScale == true then
+        oScale = 0.16
+    end
+    if type(oScale) == "number" and oScale > 0 then
+        local ringBoost = 1.1
+        for i = 10, 1, -1 do
+            -- Same as MainFrame outer glow, slightly boosted for a bigger bloom
+            local thickness = (6 + (i - 1) * 2.2) * oScale * ringBoost
+            if thickness < 0.22 then
+                thickness = 0.22
+            end
+            local transparency = 0.91 + (i - 1) * 0.0075
+            if transparency > 0.99 then
+                transparency = 0.99
+            end
+            local s = Instance.new("UIStroke", target)
+            s.Name = "OuterMenuGlow" .. i
+            s.Thickness = thickness
+            s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            s.LineJoinMode = Enum.LineJoinMode.Round
+            s.Color = getMenuGlowStrokeColor(CurrentTheme)
+            s.Transparency = transparency
+            table.insert(getgenv().MenuChaseGlowStrokes, s)
+        end
+    else
+        local layers = strong and 6 or 5
+        local thickBase = strong and 0.65 or 0.5
+        local thickStep = strong and 0.36 or 0.28
+        local tBase = strong and 0.84 or 0.86
+        local tStep = strong and 0.014 or 0.016
+        for i = layers, 1, -1 do
+            local s = Instance.new("UIStroke", target)
+            s.Name = "MenuGlowLayer" .. i
+            s.Thickness = thickBase + (layers - i) * thickStep
+            s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+            s.LineJoinMode = Enum.LineJoinMode.Round
+            s.Color = getMenuGlowStrokeColor(CurrentTheme)
+            s.Transparency = tBase + (layers - i) * tStep
+            table.insert(getgenv().MenuChaseGlowStrokes, s)
+        end
+    end
+    local chase = Instance.new("UIStroke", target)
+    chase.Name = "ChasingMenuStroke"
+    local ch
+    if type(oScale) == "number" and oScale > 0 then
+        ch = (chaseThickness or 1.4) * (0.54 + 2.9 * oScale) * (strong and 1.05 or 1)
+        if ch < 0.6 then
+            ch = 0.6
+        end
+        if ch > 1.9 then
+            ch = 1.9
+        end
+    else
+        ch = (chaseThickness or 1.5) * (strong and 1.12 or 1)
+    end
+    chase.Thickness = ch
+    chase.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    chase.LineJoinMode = Enum.LineJoinMode.Round
+    chase.Transparency = 0
+    chase.Color = Color3.new(1, 1, 1)
+    local grad = Instance.new("UIGradient", chase)
+    grad.Name = "ChaseGrad"
+    grad.Color = getChaseColorSequenceForTheme(CurrentTheme, false)
+    grad.Rotation = 0
+    table.insert(destGradients, grad)
+end
+
+-- default outerScale 0.162; pass 0 for legacy multi-stroke only
+local function addContentChaseGlow(target, thickness, strong, outerScale)
+    if not target then
+        return
+    end
+    getgenv().ContentChaseGradients = getgenv().ContentChaseGradients or {}
+    if outerScale == nil then
+        outerScale = 0.162
+    end
+    if outerScale == 0 or outerScale == false then
+        addChasingMenuGlow(target, getgenv().ContentChaseGradients, thickness or 1.5, strong ~= false, nil)
+    else
+        addChasingMenuGlow(target, getgenv().ContentChaseGradients, thickness or 1.45, strong ~= false, outerScale)
+    end
+end
+
+local function CreateHUD(name, tabDisplayName)
     local key = name .. "HUD"
     local def = HUDLayoutDefaults[key]
     local HUD = Instance.new("Frame", ScreenGui); HUD.Name = key
@@ -571,25 +700,90 @@ local function CreateHUD(name, titleText)
     HUDGradient.Rotation = 0
     table.insert(getgenv().HUDPopoutChaseGradients, HUDGradient)
 
+    local titleRow = Instance.new("Frame", HUD)
+    titleRow.Name = "TitleRow"
+    -- Match Whitelist header strip: same height / inset as `wlTitle` row.
+    titleRow.Size = UDim2.new(1, -30, 0, 40)
+    titleRow.Position = UDim2.new(0, 15, 0, 10)
+    titleRow.BackgroundTransparency = 1
+    titleRow.BorderSizePixel = 0
+    titleRow.ZIndex = 15
+
+    local iconBg = Instance.new("Frame", titleRow)
+    iconBg.Name = "IconBadge"
+    iconBg.Size = UDim2.new(0, 36, 0, 36)
+    iconBg.Position = UDim2.new(0, 2, 0.5, -18)
+    iconBg.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+    iconBg.BackgroundTransparency = 0.1
+    iconBg.BorderSizePixel = 0
+    iconBg.ZIndex = 22
+    Instance.new("UICorner", iconBg).CornerRadius = UDim.new(0, 9)
+    addChasingMenuGlow(iconBg, getgenv().TabIconChaseGradients, 1.2, true, 0.11)
+
+    local iconText = Instance.new("TextLabel", iconBg)
+    iconText.Name = "IconText"
+    iconText.Size = UDim2.new(1, 0, 1, 0)
+    iconText.BackgroundTransparency = 1
+    iconText.Text = TAB_ICONS[tabDisplayName] or (tabDisplayName:sub(1, 1):upper() .. (tabDisplayName:sub(2, 2) or ""))
+    iconText.Font = Enum.Font.GothamBlack
+    iconText.TextSize = 15
+    iconText.TextXAlignment = Enum.TextXAlignment.Center
+    iconText.TextYAlignment = Enum.TextYAlignment.Center
+    iconText.TextColor3 = Color3.fromRGB(220, 222, 235)
+    iconText.ZIndex = 23
+
+    local t = Instance.new("TextLabel", titleRow)
+    t.Name = "Title"
+    t.Size = UDim2.new(1, -60, 1, 0)
+    t.Position = UDim2.new(0, 50, 0, 0)
+    t.BackgroundTransparency = 1
+    t.Text = string.upper(tabDisplayName)
+    t.TextColor3 = Themes.Lofi.Contrast
+    t.TextSize = 18
+    t.Font = Enum.Font.GothamBold
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextYAlignment = Enum.TextYAlignment.Center
+    t.ZIndex = 16
+
+    EnableDrag(HUD, titleRow)
+
     HUDLEDData[name] = {
-        Gradient = HUDGradient, 
-        GlowStrokes = HUDGlowStrokes
+        Gradient = HUDGradient,
+        GlowStrokes = HUDGlowStrokes,
+        TitleRow = titleRow,
+        IconBadge = iconBg,
+        IconText = iconText,
     }
-    
-    local t = Instance.new("TextLabel", HUD); t.Name = "Title"; t.Size = UDim2.new(1, -30, 0, 40); t.Position = UDim2.new(0, 15, 0, 10); t.BackgroundTransparency = 1; t.Text = titleText; t.TextColor3 = Themes.Lofi.Contrast; t.TextSize = 18; t.Font = Enum.Font.GothamBold; t.TextXAlignment = Enum.TextXAlignment.Left; EnableDrag(HUD, t)
+
     local res = Instance.new("Frame", HUD); res.Name = "Resize"; res.Size = UDim2.new(1, 0, 0, 16); res.Position = UDim2.new(0, 0, 1, -16); res.BackgroundTransparency = 1; res.ZIndex = 25; EnableVerticalResize(HUD, res)
     local bar = Instance.new("Frame", res); bar.Name = "Bar"; bar.Size = UDim2.new(0, 40, 0, 3); bar.Position = UDim2.new(0.5, -20, 0.5, -1); bar.BackgroundColor3 = Themes.Lofi.Accent; bar.BackgroundTransparency = 0.3; bar.BorderSizePixel = 0; Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
-    local cont = Instance.new("ScrollingFrame", HUD); cont.Name = "Content"; cont.Size = UDim2.new(1, -20, 1, -65); cont.Position = UDim2.new(0, 10, 0, 50); cont.BackgroundTransparency = 1; cont.ScrollBarThickness = 0; cont.ZIndex = 10; cont.AutomaticCanvasSize = Enum.AutomaticSize.Y; cont.CanvasSize = UDim2.new(0, 0, 0, 0); local layout = Instance.new("UIListLayout", cont); layout.Padding = UDim.new(0, 10)
+    local cont = Instance.new("ScrollingFrame", HUD); cont.Name = "Content"; cont.Size = UDim2.new(1, -30, 1, -65); cont.Position = UDim2.new(0, 15, 0, 50); cont.BackgroundTransparency = 1; cont.ScrollBarThickness = 0; cont.ZIndex = 10; cont.AutomaticCanvasSize = Enum.AutomaticSize.Y; cont.CanvasSize = UDim2.new(0, 0, 0, 0); local layout = Instance.new("UIListLayout", cont); layout.Padding = UDim.new(0, 10)
     local padding = Instance.new("UIPadding", cont)
     -- Match dropdown list inset: header, options, and buttons (e.g. pop-out) share one width
     local HUD_CONTENT_H_PAD = 8
     padding.PaddingLeft = UDim.new(0, HUD_CONTENT_H_PAD)
     padding.PaddingRight = UDim.new(0, HUD_CONTENT_H_PAD)
     padding.PaddingBottom = UDim.new(0, 6)
+    applySakuraScrollFrameFeel(cont, { direction = Enum.ScrollingDirection.Y })
     return HUD, cont, t, bar
 end
 
 local HUDAnimating = {}
+-- Active pop-out tweens (cancel when menu shell forces a synced close, e.g. whitelist / chip mid-tween).
+local HudPanelTween = setmetatable({}, { __mode = "k" })
+
+local function cancelHudPanelTween(hud)
+    if not hud then
+        return
+    end
+    local tw = HudPanelTween[hud]
+    if tw then
+        pcall(function()
+            tw:Cancel()
+        end)
+        HudPanelTween[hud] = nil
+    end
+end
 -- Scanner inline chrome uses this; declared here so pop-out / menu guards can see it outside _initEliteFeatureSections.
 local ScannerInlineAnimating = false
 -- One duration for main shell, pop-outs, scanner chrome, watermark (same easing family = no “cheap” timing mismatch).
@@ -597,9 +791,44 @@ local MENU_UI_TWEEN = 0.68
 local MENU_OPEN_TWEEN = MENU_UI_TWEEN
 local MENU_CLOSE_TWEEN = MENU_UI_TWEEN
 local PANEL_ANIM_DURATION = MENU_UI_TWEEN
+-- Literal shared TweenInfo for menu shell + paired HUD tweens (same object = identical clock/easing to TweenService).
+local TWEEN_SHELL_CLOSE = TweenInfo.new(MENU_CLOSE_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+local TWEEN_SHELL_OPEN = TweenInfo.new(MENU_OPEN_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+local TWEEN_SHELL_OPEN_SHRINK = TweenInfo.new(MENU_OPEN_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 
-local function AnimateHUDOpen(hud)
-    if not hud or HUDAnimating[hud] then return end
+-- Pop-out close/open: snap pivot using screen-space math. Parent may be ScreenGui (GuiBase2d), not GuiObject.
+local function hudSnapPivotToVisualCenter(hud)
+    if not hud or not hud.Parent then
+        return false
+    end
+    local parent = hud.Parent
+    local absPos = hud.AbsolutePosition
+    local absSize = hud.AbsoluteSize
+    if absSize.X < 1 or absSize.Y < 1 then
+        return false
+    end
+    local pAbs = Vector2.zero
+    if parent:IsA("GuiBase2d") then
+        pAbs = parent.AbsolutePosition
+    end
+    local cx = absPos.X + absSize.X * 0.5 - pAbs.X
+    local cy = absPos.Y + absSize.Y * 0.5 - pAbs.Y
+    hud.AnchorPoint = Vector2.new(0.5, 0.5)
+    hud.Position = UDim2.fromOffset(cx, cy)
+    return true
+end
+
+local function AnimateHUDOpen(hud, tweenInfoOverride)
+    if not hud then
+        return
+    end
+    if HudPanelTween[hud] then
+        cancelHudPanelTween(hud)
+        HUDAnimating[hud] = false
+    end
+    if HUDAnimating[hud] then
+        return
+    end
     if hud.Name == "SpectateHUD" and getgenv().LayoutSpectateHUD then
         pcall(getgenv().LayoutSpectateHUD)
     end
@@ -607,55 +836,89 @@ local function AnimateHUDOpen(hud)
 
     local originalSize = hud.Size
     local originalPos = hud.Position
+    local originalAnchor = hud.AnchorPoint
 
     hud.ClipsDescendants = true
-    hud.AnchorPoint = Vector2.new(0.5, 0.5)
-    hud.Position = UDim2.new(originalPos.X.Scale, originalPos.X.Offset + originalSize.X.Offset / 2, originalPos.Y.Scale, originalPos.Y.Offset + originalSize.Y.Offset / 2)
+    if not hudSnapPivotToVisualCenter(hud) then
+        hud.AnchorPoint = Vector2.new(0.5, 0.5)
+        hud.Position = UDim2.new(originalPos.X.Scale, originalPos.X.Offset + originalSize.X.Offset / 2, originalPos.Y.Scale, originalPos.Y.Offset + originalSize.Y.Offset / 2)
+    end
     hud.Size = UDim2.new(0, 0, 0, 0)
     hud.Visible = true
 
-    local openTween = Services.Tween:Create(hud, TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = originalSize })
+    local openTween = Services.Tween:Create(hud, tweenInfoOverride or TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = originalSize })
+    HudPanelTween[hud] = openTween
     openTween:Play()
-    openTween.Completed:Connect(function()
+    openTween.Completed:Connect(function(state)
+        if state ~= nil and state ~= Enum.PlaybackState.Completed then
+            if HudPanelTween[hud] == openTween then
+                HudPanelTween[hud] = nil
+            end
+            return
+        end
+        if HudPanelTween[hud] == openTween then
+            HudPanelTween[hud] = nil
+        end
         hud.ClipsDescendants = false
-        hud.AnchorPoint = Vector2.new(0, 0)
+        hud.AnchorPoint = originalAnchor
         hud.Position = originalPos
         HUDAnimating[hud] = false
     end)
 end
 
-local function AnimateHUDClose(hud)
-    if not hud or not hud.Visible or HUDAnimating[hud] then return end
+local function AnimateHUDClose(hud, tweenInfoOverride, forceFromMenuShell)
+    forceFromMenuShell = forceFromMenuShell == true
+    if not hud or not hud.Visible then
+        return
+    end
+    if HUDAnimating[hud] and not forceFromMenuShell then
+        return
+    end
+    if forceFromMenuShell then
+        cancelHudPanelTween(hud)
+        HUDAnimating[hud] = false
+    end
     HUDAnimating[hud] = true
 
     local originalSize = hud.Size
     local originalPos = hud.Position
+    local originalAnchor = hud.AnchorPoint
 
     hud.ClipsDescendants = true
-    hud.AnchorPoint = Vector2.new(0.5, 0.5)
-    hud.Position = UDim2.new(originalPos.X.Scale, originalPos.X.Offset + hud.Size.X.Offset / 2, originalPos.Y.Scale, originalPos.Y.Offset + hud.Size.Y.Offset / 2)
+    if not hudSnapPivotToVisualCenter(hud) then
+        hud.AnchorPoint = Vector2.new(0.5, 0.5)
+        hud.Position = UDim2.new(originalPos.X.Scale, originalPos.X.Offset + hud.Size.X.Offset / 2, originalPos.Y.Scale, originalPos.Y.Offset + hud.Size.Y.Offset / 2)
+    end
 
-    local closeTween = Services.Tween:Create(hud, TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { Size = UDim2.new(0, 0, 0, 0) })
+    local closeTween = Services.Tween:Create(hud, tweenInfoOverride or TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { Size = UDim2.new(0, 0, 0, 0) })
+    HudPanelTween[hud] = closeTween
     closeTween:Play()
-    closeTween.Completed:Connect(function()
+    closeTween.Completed:Connect(function(state)
+        if state ~= nil and state ~= Enum.PlaybackState.Completed then
+            if HudPanelTween[hud] == closeTween then
+                HudPanelTween[hud] = nil
+            end
+            return
+        end
+        if HudPanelTween[hud] == closeTween then
+            HudPanelTween[hud] = nil
+        end
         hud.Visible = false
         hud.Size = originalSize
         hud.ClipsDescendants = false
-        hud.AnchorPoint = Vector2.new(0, 0)
+        hud.AnchorPoint = originalAnchor
         hud.Position = originalPos
         HUDAnimating[hud] = false
     end)
 end
 
-local ScannerHUD, ScanCont, ScanHUDTitle, ScanHUDRes = CreateHUD("Scanner", "SCANNER MONITOR")
-local RemoteHUD, RemoteCont, RemoteHUDTitle, RemoteHUDRes = CreateHUD("Remote", "REMOTE EXECUTION")
-local BuyersHUD, BuyersCont, BuyersHUDTitle, BuyersHUDRes = CreateHUD("Buyers", "BUYER TELEPORT")
-local SpectateHUD, SpectateCont, SpectateHUDTitle, SpectateHUDRes = CreateHUD("Spectate", "PLAYER VIEWER")
+local ScannerHUD, ScanCont, ScanHUDTitle, ScanHUDRes = CreateHUD("Scanner", "Scanner")
+local RemoteHUD, RemoteCont, RemoteHUDTitle, RemoteHUDRes = CreateHUD("Remote", "Instant UI")
+local SpectateHUD, SpectateCont, SpectateHUDTitle, SpectateHUDRes = CreateHUD("Spectate", "Spectate")
 do
-    -- Tighter margins than default CreateHUD (10+10 / 8+8) so the outer frame is slimmer
-    -- without shrinking the inner panel (still ~260px usable → same bar / VIEW sizes).
-    SpectateCont.Position = UDim2.new(0, 4, 0, 50)
-    SpectateCont.Size = UDim2.new(1, -8, 1, -65)
+    -- Match header margins to CreateHUD content (15px side inset).
+    SpectateCont.Position = UDim2.new(0, 15, 0, 50)
+    SpectateCont.Size = UDim2.new(1, -30, 1, -65)
     local spectateContPad = SpectateCont:FindFirstChildOfClass("UIPadding")
     if spectateContPad then
         spectateContPad.PaddingLeft = UDim.new(0, 0)
@@ -924,101 +1187,6 @@ do
     StrokeGradient.Rotation = 0
 end
 
-getgenv().TopBarChaseGradients = getgenv().TopBarChaseGradients or {}
-getgenv().ContentChaseGradients = getgenv().ContentChaseGradients or {}
-getgenv().TabIconChaseGradients = getgenv().TabIconChaseGradients or {}
-getgenv().MenuChaseGlowStrokes = getgenv().MenuChaseGlowStrokes or {}
-
--- outerScale: MainFrame-style halo, scaled. Default ~0.16 for a bit more bloom than 0.145.
-local function addChasingMenuGlow(target, destGradients, chaseThickness, strong, outerScale)
-    if not target or not destGradients then
-        return
-    end
-    strong = strong == true
-    local oScale = outerScale
-    if oScale == true then
-        oScale = 0.16
-    end
-    if type(oScale) == "number" and oScale > 0 then
-        local ringBoost = 1.1
-        for i = 10, 1, -1 do
-            -- Same as MainFrame outer glow, slightly boosted for a bigger bloom
-            local thickness = (6 + (i - 1) * 2.2) * oScale * ringBoost
-            if thickness < 0.22 then
-                thickness = 0.22
-            end
-            local transparency = 0.91 + (i - 1) * 0.0075
-            if transparency > 0.99 then
-                transparency = 0.99
-            end
-            local s = Instance.new("UIStroke", target)
-            s.Name = "OuterMenuGlow" .. i
-            s.Thickness = thickness
-            s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-            s.LineJoinMode = Enum.LineJoinMode.Round
-            s.Color = getMenuGlowStrokeColor(CurrentTheme)
-            s.Transparency = transparency
-            table.insert(getgenv().MenuChaseGlowStrokes, s)
-        end
-    else
-        local layers = strong and 6 or 5
-        local thickBase = strong and 0.65 or 0.5
-        local thickStep = strong and 0.36 or 0.28
-        local tBase = strong and 0.84 or 0.86
-        local tStep = strong and 0.014 or 0.016
-        for i = layers, 1, -1 do
-            local s = Instance.new("UIStroke", target)
-            s.Name = "MenuGlowLayer" .. i
-            s.Thickness = thickBase + (layers - i) * thickStep
-            s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-            s.LineJoinMode = Enum.LineJoinMode.Round
-            s.Color = getMenuGlowStrokeColor(CurrentTheme)
-            s.Transparency = tBase + (layers - i) * tStep
-            table.insert(getgenv().MenuChaseGlowStrokes, s)
-        end
-    end
-    local chase = Instance.new("UIStroke", target)
-    chase.Name = "ChasingMenuStroke"
-    local ch
-    if type(oScale) == "number" and oScale > 0 then
-        ch = (chaseThickness or 1.4) * (0.54 + 2.9 * oScale) * (strong and 1.05 or 1)
-        if ch < 0.6 then
-            ch = 0.6
-        end
-        if ch > 1.9 then
-            ch = 1.9
-        end
-    else
-        ch = (chaseThickness or 1.5) * (strong and 1.12 or 1)
-    end
-    chase.Thickness = ch
-    chase.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    chase.LineJoinMode = Enum.LineJoinMode.Round
-    chase.Transparency = 0
-    chase.Color = Color3.new(1, 1, 1)
-    local grad = Instance.new("UIGradient", chase)
-    grad.Name = "ChaseGrad"
-    grad.Color = getChaseColorSequenceForTheme(CurrentTheme, false)
-    grad.Rotation = 0
-    table.insert(destGradients, grad)
-end
-
--- default outerScale 0.162; pass 0 for legacy multi-stroke only
-local function addContentChaseGlow(target, thickness, strong, outerScale)
-    if not target then
-        return
-    end
-    getgenv().ContentChaseGradients = getgenv().ContentChaseGradients or {}
-    if outerScale == nil then
-        outerScale = 0.162
-    end
-    if outerScale == 0 or outerScale == false then
-        addChasingMenuGlow(target, getgenv().ContentChaseGradients, thickness or 1.5, strong ~= false, nil)
-    else
-        addChasingMenuGlow(target, getgenv().ContentChaseGradients, thickness or 1.45, strong ~= false, outerScale)
-    end
-end
-
 do
 	if notifyToast and not notifyToast:GetAttribute("SakuraNotifyChaseWired") then
 		notifyToast:SetAttribute("SakuraNotifyChaseWired", true)
@@ -1133,12 +1301,39 @@ addChasingMenuGlow(WhitelistBtnFrame, getgenv().TopBarChaseGradients, 1.55, true
 addChasingMenuGlow(ThemeBtnFrame, getgenv().TopBarChaseGradients, 1.55, true, 0.22)
 
 local Sidebar = Instance.new("ScrollingFrame", MainFrame); Sidebar.Name = "Sidebar"; Sidebar.Size = UDim2.new(0, 200, 1, -173); Sidebar.Position = UDim2.new(0, 15, 0, 115); Sidebar.BackgroundTransparency = 0; Sidebar.BackgroundColor3 = Themes.Lofi.Tint; Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 14); Sidebar.ZIndex = 20; Sidebar.ScrollBarThickness = 4; Sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y; Sidebar.CanvasSize = UDim2.new(0, 0, 0, 0); Sidebar.BorderSizePixel = 0; Sidebar.ClipsDescendants = true
+applySakuraScrollFrameFeel(Sidebar, { direction = Enum.ScrollingDirection.Y })
 do local SidebarLayout = Instance.new("UIListLayout", Sidebar); SidebarLayout.Padding = UDim.new(0, 9); SidebarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 local SidebarPadding = Instance.new("UIPadding", Sidebar); SidebarPadding.PaddingTop = UDim.new(0, 10); SidebarPadding.PaddingBottom = UDim.new(0, 40); SidebarPadding.PaddingLeft = UDim.new(0, 10); SidebarPadding.PaddingRight = UDim.new(0, 10) end
 -- Sidebar: x=15, width=200 → right edge 215. Content starts after a small gap (not under the rail).
 -- More gap from sidebar rail; stops tab glow/content hugging the pink column
 local CONTENT_X = 234
 local ContentArea = Instance.new("Frame", MainFrame); ContentArea.Name = "Content"; ContentArea.Size = UDim2.new(1, -CONTENT_X, 1, -173); ContentArea.Position = UDim2.new(0, CONTENT_X, 0, 115); ContentArea.BackgroundTransparency = 1; ContentArea.ZIndex = 20; ContentArea.ClipsDescendants = true
+
+-- Luarmor: bottom-left of main content while Home tab is active (pinned to content area, not scroll canvas).
+HomeLuarmorFooter = Instance.new("TextLabel", ContentArea)
+HomeLuarmorFooter.Name = "HomeLuarmorFooter"
+HomeLuarmorFooter.AnchorPoint = Vector2.new(0, 1)
+HomeLuarmorFooter.Position = UDim2.new(0, 8, 1, -8)
+HomeLuarmorFooter.Size = UDim2.new(1, -16, 0, 36)
+HomeLuarmorFooter.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+HomeLuarmorFooter.BackgroundTransparency = 0.12
+HomeLuarmorFooter.BorderSizePixel = 0
+HomeLuarmorFooter.ZIndex = 100
+HomeLuarmorFooter.Text = ""
+HomeLuarmorFooter.TextColor3 = Color3.fromRGB(175, 178, 195)
+HomeLuarmorFooter.TextSize = 10
+HomeLuarmorFooter.Font = Enum.Font.GothamBold
+HomeLuarmorFooter.TextXAlignment = Enum.TextXAlignment.Left
+HomeLuarmorFooter.TextYAlignment = Enum.TextYAlignment.Top
+HomeLuarmorFooter.TextWrapped = true
+HomeLuarmorFooter.Visible = false
+HomeLuarmorFooter.RichText = false
+Instance.new("UICorner", HomeLuarmorFooter).CornerRadius = UDim.new(0, 8)
+local HomeLuarmorPad = Instance.new("UIPadding", HomeLuarmorFooter)
+HomeLuarmorPad.PaddingLeft = UDim.new(0, 8)
+HomeLuarmorPad.PaddingRight = UDim.new(0, 8)
+HomeLuarmorPad.PaddingTop = UDim.new(0, 5)
+HomeLuarmorPad.PaddingBottom = UDim.new(0, 5)
 
 local PremiumStatsBar = Instance.new("Frame", MainFrame)
 PremiumStatsBar.Name = "PremiumStatsBar"
@@ -1582,7 +1777,7 @@ EliteLib.Elements = {}
 function EliteLib:CreateSection(parent, title)
     local Section = Instance.new("Frame", parent); Section.Size = UDim2.new(1, 0, 0, 0); Section.BackgroundTransparency = 1; Section.ZIndex = 20
     local t = Instance.new("TextLabel", Section); t.Name = "Title"; t.Size = UDim2.new(1, 0, 0, 35); t.BackgroundTransparency = 1; t.Text = title; t.TextColor3 = Themes.Lofi.Accent; t.TextSize = 16; t.Font = Enum.Font.GothamBold; t.TextXAlignment = Enum.TextXAlignment.Left; t.ZIndex = 21
-    if title == "" then t.Visible = false end
+    t.Visible = false
     local l = Instance.new("UIListLayout", Section); l.Padding = UDim.new(0, 12); l.SortOrder = Enum.SortOrder.LayoutOrder
     l:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() Section.Size = UDim2.new(1, 0, 0, l.AbsoluteContentSize.Y) end)
     return Section
@@ -1902,6 +2097,8 @@ function EliteLib:CreateDropdown(parent, text, options, callback, toggleObj, fla
     list.ScrollingEnabled = false
     list.ElasticBehavior = Enum.ElasticBehavior.Never
     list.ScrollingDirection = Enum.ScrollingDirection.Y
+
+    applySakuraScrollFrameFeel(list, { direction = Enum.ScrollingDirection.Y, elastic = Enum.ElasticBehavior.Never })
 
     local topSpacer = Instance.new("Frame", list)
     topSpacer.Name = "TopSpacer"
@@ -2261,6 +2458,8 @@ end
 
 -- Original narrow column: a bit slimmer than 330 for horizontal “length”
 local TAB_PAGE_CONTENT_WIDTH = 308
+-- Top inset for tab pages without a pinned sub-tab strip (Visual/Settings still use 46px under their pinned strips).
+local TAB_PAGE_TOP_INSET = 11
 
 local function CreatePage(name)
     local pg = Instance.new("ScrollingFrame", ContentArea)
@@ -2277,7 +2476,7 @@ local function CreatePage(name)
     pg.ClipsDescendants = true
 
     local pgPad = Instance.new("UIPadding", pg)
-    pgPad.PaddingTop = UDim.new(0, 0)
+    pgPad.PaddingTop = UDim.new(0, TAB_PAGE_TOP_INSET)
     pgPad.PaddingLeft = UDim.new(0, 6)
     pgPad.PaddingRight = UDim.new(0, 6)
 
@@ -2301,25 +2500,11 @@ local function CreatePage(name)
     local padding = Instance.new("UIPadding", inner)
     padding.PaddingBottom = UDim.new(0, 40)
 
+    applySakuraScrollFrameFeel(pg, { direction = Enum.ScrollingDirection.Y })
+
     TabPages[name] = pg
     return inner
 end
-
--- Default tab icons when CreateTab is called with "" as icon
-local TAB_ICONS = {
-    ["Home"] = "🏠",
-    ["Aim"] = "🎯",
-    ["Visual"] = "👁️",
-    ["Player"] = "🧍",
-    ["Vehicle"] = "🚗",
-    ["Crypto"] = "💰",
-    ["Servers"] = "🌐",
-    ["Scanner"] = "🔍",
-    ["Instant UI"] = "⚡",
-    ["Buyers"] = "🛒",
-    ["Settings"] = "⚙️",
-    ["Spectate"] = "📹",
-}
 
 local function CreateTab(name, icon)
     local btn = Instance.new("Frame", Sidebar)
@@ -2419,7 +2604,7 @@ local function CreateTab(name, icon)
             if n == name then
                 p.Visible = true
                 p.Position = UDim2.new(0, 30, 0, 0)
-                local slideTween = Services.Tween:Create(p, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0)})
+                local slideTween = Services.Tween:Create(p, TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {Position = UDim2.new(0, 0, 0, 0)})
                 slideTween:Play()
             else
                 p.Visible = false
@@ -2428,6 +2613,12 @@ local function CreateTab(name, icon)
         end
         CurrentTab = name
         ApplyTheme(CurrentTheme, false, true)
+        pcall(function()
+            local fn = getgenv().SakuraRefreshHomeLuarmorFooter
+            if type(fn) == "function" then
+                fn()
+            end
+        end)
     end); return pageContent
 end
 
@@ -2457,7 +2648,7 @@ local function GetWLRowColors(wl)
     return rowBg, rowAlpha, dnColor, unColor, strokeColor
 end
 
-local WhitelistPanel, wlTitle, wlActionBtn, wlActionLabel, wlScroll
+local WhitelistPanel, wlTitleRow, wlIconBadge, wlTitle, wlIcon, wlActionBtn, wlActionLabel, wlScroll
 
 local function SetHubLogoImagesForTheme(themeName)
     local img = GetLogoImageForTheme(themeName)
@@ -2578,11 +2769,6 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
         end
     end)
     pcall(function()
-        if getgenv().SakuraEspPreview_ApplyTheme then
-            getgenv().SakuraEspPreview_ApplyTheme(name)
-        end
-    end)
-    pcall(function()
         if getgenv().SakuraAimSubTabRefreshTheme then
             getgenv().SakuraAimSubTabRefreshTheme()
         end
@@ -2691,6 +2877,26 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
         
         if StatsSubTitle then
             StatsSubTitle.TextColor3 = (name == "Sakura" and Color3.new(1,1,1) or (name == "Lofi" and Color3.fromRGB(235, 175, 218) or ((name == "Galaxy") and Color3.fromRGB(160, 120, 200) or Color3.fromRGB(160, 160, 180))))
+        end
+
+        if HomeLuarmorFooter then
+            if name == "Sakura" then
+                HomeLuarmorFooter.BackgroundColor3 = Color3.fromRGB(255, 250, 252)
+                HomeLuarmorFooter.BackgroundTransparency = 0.25
+                HomeLuarmorFooter.TextColor3 = Color3.fromRGB(60, 55, 70)
+            elseif name == "Lofi" then
+                HomeLuarmorFooter.BackgroundColor3 = Color3.fromRGB(28, 14, 26)
+                HomeLuarmorFooter.BackgroundTransparency = 0.25
+                HomeLuarmorFooter.TextColor3 = Color3.fromRGB(235, 200, 225)
+            elseif name == "Galaxy" then
+                HomeLuarmorFooter.BackgroundColor3 = Color3.fromRGB(18, 14, 32)
+                HomeLuarmorFooter.BackgroundTransparency = 0.3
+                HomeLuarmorFooter.TextColor3 = Color3.fromRGB(190, 175, 220)
+            else
+                HomeLuarmorFooter.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+                HomeLuarmorFooter.BackgroundTransparency = 0.12
+                HomeLuarmorFooter.TextColor3 = Color3.fromRGB(175, 178, 195)
+            end
         end
         
         if FPSLabel then FPSLabel.TextColor3 = theme.Accent end
@@ -2807,14 +3013,18 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
             if d:IsA("TextLabel") then
                 if d.Name == "HomeUserTitle" or d.Name == "HomeUserHandle" then
                     d.TextColor3 = mainText
-                elseif d.Name == "HomeRegionLine" or d.Name == "HomeTimeLine" then
+                elseif d.Name == "HomeRegionLine" or d.Name == "HomeDateLine" or d.Name == "HomeClockLine" or d.Name == "HomeTimeLine" then
+                    d.TextColor3 = mainText
+                elseif d.Name == "HomeLuarmorKeyHeader" or d.Name == "HomeLuarmorDurationHeader" then
+                    d.TextColor3 = (name == "Sakura" and Color3.fromRGB(120, 120, 135) or Color3.fromRGB(200, 205, 220))
+                elseif d.Name == "HomeLuarmorKeyValue" or d.Name == "HomeLuarmorDurationValue" then
                     d.TextColor3 = mainText
                 end
             end
         end
     end
     
-    for _, hud in ipairs({ScannerHUD, RemoteHUD, SpectateHUD, BuyersHUD}) do 
+    for _, hud in ipairs({ ScannerHUD, RemoteHUD, SpectateHUD }) do
         if name == "Sakura" then
             hud.BackgroundColor3 = Color3.fromRGB(235, 235, 240)
             hud.BackgroundTransparency = 0.3
@@ -2826,7 +3036,30 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
             hud.BackgroundTransparency = 0.6
         end
         
-        hud:FindFirstChild("Title").TextColor3 = (name == "Sakura" and theme.Accent or theme.Contrast)
+        local titleRow = hud:FindFirstChild("TitleRow")
+        local titleLbl = titleRow and titleRow:FindFirstChild("Title") or hud:FindFirstChild("Title")
+        if titleLbl then
+            titleLbl.TextColor3 = (name == "Sakura" and theme.Accent or theme.Contrast)
+        end
+        if titleRow then
+            local iconBg = titleRow:FindFirstChild("IconBadge")
+            local iconText = iconBg and iconBg:FindFirstChild("IconText")
+            if iconBg and iconBg:IsA("Frame") and iconText and iconText:IsA("TextLabel") then
+                if name == "Sakura" then
+                    iconBg.BackgroundColor3 = Color3.fromRGB(255, 240, 248)
+                    iconText.TextColor3 = theme.Accent
+                elseif name == "Galaxy" then
+                    iconBg.BackgroundColor3 = Color3.fromRGB(16, 14, 32)
+                    iconText.TextColor3 = Color3.fromRGB(200, 205, 220)
+                elseif name == "Lofi" then
+                    iconBg.BackgroundColor3 = Color3.fromRGB(40, 22, 40)
+                    iconText.TextColor3 = Color3.fromRGB(200, 205, 220)
+                else
+                    iconBg.BackgroundColor3 = Color3.fromRGB(28, 30, 42)
+                    iconText.TextColor3 = Color3.new(1, 1, 1)
+                end
+            end
+        end
         hud:FindFirstChild("Resize"):FindFirstChild("Bar").BackgroundColor3 = theme.Accent
         
         local hudRowAlpha = (name == "Sakura" and 0.1 or 0.3)
@@ -2884,6 +3117,21 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
             WhitelistPanel.BackgroundTransparency = 0.6
         end
         if wlTitle then wlTitle.TextColor3 = (name == "Sakura" and theme.Accent or theme.Contrast) end
+        if wlIconBadge and wlIconBadge:IsA("Frame") and wlIcon and wlIcon:IsA("TextLabel") then
+            if name == "Sakura" then
+                wlIconBadge.BackgroundColor3 = Color3.fromRGB(255, 240, 248)
+                wlIcon.TextColor3 = theme.Accent
+            elseif name == "Galaxy" then
+                wlIconBadge.BackgroundColor3 = Color3.fromRGB(16, 14, 32)
+                wlIcon.TextColor3 = Color3.fromRGB(200, 205, 220)
+            elseif name == "Lofi" then
+                wlIconBadge.BackgroundColor3 = Color3.fromRGB(40, 22, 40)
+                wlIcon.TextColor3 = Color3.fromRGB(200, 205, 220)
+            else
+                wlIconBadge.BackgroundColor3 = Color3.fromRGB(28, 30, 42)
+                wlIcon.TextColor3 = Color3.new(1, 1, 1)
+            end
+        end
         if wlActionBtn then wlActionBtn.BackgroundColor3 = theme.Accent end
         if wlActionLabel then wlActionLabel.TextColor3 = Color3.new(1,1,1) end
         if wlScroll then
@@ -3357,43 +3605,6 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
                 end
             end
         end
-        if c:IsA("Frame") and c.Name == "BuyersInline" then
-            for _, ic in ipairs(c:GetChildren()) do
-                if ic:IsA("Frame") and ic:FindFirstChild("Label") and ic.Name ~= "DropdownItem" and ic.Name ~= "KeybindItem" then
-                    ic.BackgroundColor3 = contentPanel
-                    ic.BackgroundTransparency = boxAlpha
-                    ic.Label.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1, 1, 1))
-                    if ic:FindFirstChild("Subtitle") then
-                        ic.Subtitle.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1, 1, 1))
-                    end
-                end
-                if ic.Name == "DropdownItem" then
-                    local hdr = ic:FindFirstChild("DropdownHeader")
-                    if hdr then
-                        hdr.BackgroundColor3 = contentPanel
-                        hdr.BackgroundTransparency = boxAlpha
-                        local hl = hdr:FindFirstChild("Label")
-                        if hl then
-                            hl.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1, 1, 1))
-                        end
-                    else
-                        ic.BackgroundColor3 = contentPanel
-                        ic.BackgroundTransparency = boxAlpha
-                        ic.Label.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1, 1, 1))
-                    end
-                    local lst = ic:FindFirstChild("List")
-                    if lst then
-                        for _, opt in ipairs(lst:GetChildren()) do
-                            if opt:IsA("Frame") and opt:FindFirstChild("Label") then
-                                opt.BackgroundColor3 = contentPanel
-                                opt.BackgroundTransparency = boxAlpha
-                                opt.Label.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1, 1, 1))
-                            end
-                        end
-                    end
-                end
-            end
-        end
         if c:IsA("Frame") and c:FindFirstChild("Input") then c.BackgroundColor3 = contentPanel; c.BackgroundTransparency = boxAlpha; c.Input.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1,1,1)) end
         if c.Name == "KeybindItem" then c.BackgroundColor3 = contentPanel; c.BackgroundTransparency = boxAlpha; c.Label.TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1,1,1)); local kb = c:FindFirstChild("KeyBox"); kb.BackgroundColor3 = contentTrack; if kb:FindFirstChild("KeyLabel").Text ~= "..." then kb:FindFirstChild("KeyLabel").TextColor3 = (name == "Sakura" and theme.Accent or Color3.new(1,1,1)) end end
         if c:IsA("Frame") and c:FindFirstChild("ScrollingFrame") then
@@ -3500,6 +3711,18 @@ end
 
 local function SakuraRunDeferredUILoad()
 local HomePg = CreateTab("Home", "")
+do
+	local hs = TabPages["Home"]
+	if hs then
+		local inner = hs:FindFirstChild("PageContent")
+		if inner then
+			local pad = inner:FindFirstChildOfClass("UIPadding")
+			if pad then
+				pad.PaddingBottom = UDim.new(0, 80)
+			end
+		end
+	end
+end
 local AimPg = CreateTab("Aim", "")
 local VisualPg = CreateTab("Visual", "")
 local PlayerPg = CreateTab("Player", "")
@@ -3521,7 +3744,6 @@ do
 end
 local SpectatePg = CreateTab("Spectate", "")
 local InstantPg = CreateTab("Instant UI", "")
-local BuyersPg = CreateTab("Buyers", "")
 local SettingsPg = CreateTab("Settings", "")
 
 do
@@ -3709,6 +3931,7 @@ do
 	pcall(function()
 		scroll.ElasticBehavior = Enum.ElasticBehavior.Never
 	end)
+	applySakuraScrollFrameFeel(scroll, { direction = Enum.ScrollingDirection.Y, elastic = Enum.ElasticBehavior.Never })
 	local listLayout = Instance.new("UIListLayout", scroll)
 	listLayout.Padding = UDim.new(0, 4)
 	listLayout.SortOrder = Enum.SortOrder.Name
@@ -3771,9 +3994,11 @@ do
 	getgenv().SpectateWatermarkRef = watermark
 
 	local function SakuraAnimateWatermarkOpen()
-		if not watermark or HUDAnimating[watermark] then
+		if not watermark then
 			return
 		end
+		cancelHudPanelTween(watermark)
+		HUDAnimating[watermark] = false
 		if not (EliteLib.Flags and EliteLib.Flags["SpectateWatermark_Toggle"]) then
 			return
 		end
@@ -3784,9 +4009,20 @@ do
 		watermark.Size = UDim2.fromOffset(0, 0)
 		watermark.Visible = true
 		local tw = Services.Tween:Create(watermark, TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = WM_REST_SIZE })
+		HudPanelTween[watermark] = tw
 		tw:Play()
 		local openDone
-		openDone = tw.Completed:Connect(function()
+		openDone = tw.Completed:Connect(function(state)
+			if state ~= nil and state ~= Enum.PlaybackState.Completed then
+				if HudPanelTween[watermark] == tw then
+					HudPanelTween[watermark] = nil
+				end
+				openDone:Disconnect()
+				return
+			end
+			if HudPanelTween[watermark] == tw then
+				HudPanelTween[watermark] = nil
+			end
 			watermark.ClipsDescendants = false
 			watermark.AnchorPoint = WM_REST_AP
 			watermark.Position = WM_REST_POS
@@ -3796,25 +4032,47 @@ do
 		end)
 	end
 
-	local function SakuraAnimateWatermarkClose()
-		if not watermark or not watermark.Visible or HUDAnimating[watermark] then
+	local function SakuraAnimateWatermarkClose(closeTweenInfo)
+		if not watermark then
+			return
+		end
+		cancelHudPanelTween(watermark)
+		if not watermark.Visible then
+			HUDAnimating[watermark] = false
 			return
 		end
 		HUDAnimating[watermark] = true
 		local originalSize = watermark.Size
 		local originalPos = watermark.Position
 		watermark.ClipsDescendants = true
-		watermark.AnchorPoint = WM_CENTER_AP
-		watermark.Position = UDim2.new(
-			originalPos.X.Scale,
-			originalPos.X.Offset + originalSize.X.Offset / 2,
-			originalPos.Y.Scale,
-			originalPos.Y.Offset + originalSize.Y.Offset / 2
+		if not hudSnapPivotToVisualCenter(watermark) then
+			watermark.AnchorPoint = WM_CENTER_AP
+			watermark.Position = UDim2.new(
+				originalPos.X.Scale,
+				originalPos.X.Offset + originalSize.X.Offset / 2,
+				originalPos.Y.Scale,
+				originalPos.Y.Offset + originalSize.Y.Offset / 2
+			)
+		end
+		local tw = Services.Tween:Create(
+			watermark,
+			closeTweenInfo or TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.In),
+			{ Size = UDim2.new(0, 0, 0, 0) }
 		)
-		local tw = Services.Tween:Create(watermark, TweenInfo.new(PANEL_ANIM_DURATION, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { Size = UDim2.fromOffset(0, 0) })
+		HudPanelTween[watermark] = tw
 		tw:Play()
 		local closeDone
-		closeDone = tw.Completed:Connect(function()
+		closeDone = tw.Completed:Connect(function(state)
+			if state ~= nil and state ~= Enum.PlaybackState.Completed then
+				if HudPanelTween[watermark] == tw then
+					HudPanelTween[watermark] = nil
+				end
+				closeDone:Disconnect()
+				return
+			end
+			if HudPanelTween[watermark] == tw then
+				HudPanelTween[watermark] = nil
+			end
 			watermark.Visible = false
 			watermark.Size = WM_REST_SIZE
 			watermark.ClipsDescendants = false
@@ -4116,6 +4374,12 @@ ThemeTopBtn.MouseButton1Click:Connect(function()
     local themesScroll = TabPages["Themes"]
     if themesScroll then themesScroll.Visible = true end
     ApplyTheme(CurrentTheme, false)
+    pcall(function()
+        local fn = getgenv().SakuraRefreshHomeLuarmorFooter
+        if type(fn) == "function" then
+            fn()
+        end
+    end)
 end)
 
 
@@ -4161,11 +4425,49 @@ do
     getgenv().WLChaseGradient = wlGradient
 end
 
-wlTitle = Instance.new("TextLabel", WhitelistPanel)
-wlTitle.Name = "Title"; wlTitle.Size = UDim2.new(1, -30, 0, 40); wlTitle.Position = UDim2.new(0, 15, 0, 10)
-wlTitle.BackgroundTransparency = 1; wlTitle.Text = "WHITELIST"; wlTitle.TextColor3 = Themes.Lofi.Contrast
-wlTitle.TextSize = 18; wlTitle.Font = Enum.Font.GothamBold; wlTitle.TextXAlignment = Enum.TextXAlignment.Left; wlTitle.ZIndex = 51
-EnableDrag(WhitelistPanel, wlTitle)
+wlTitleRow = Instance.new("Frame", WhitelistPanel)
+wlTitleRow.Name = "TitleRow"
+wlTitleRow.Size = UDim2.new(1, -30, 0, 40)
+wlTitleRow.Position = UDim2.new(0, 15, 0, 10)
+wlTitleRow.BackgroundTransparency = 1
+wlTitleRow.ZIndex = 51
+
+wlIconBadge = Instance.new("Frame", wlTitleRow)
+wlIconBadge.Name = "IconBadge"
+wlIconBadge.Size = UDim2.new(0, 36, 0, 36)
+wlIconBadge.Position = UDim2.new(0, 2, 0.5, -18)
+wlIconBadge.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+wlIconBadge.BackgroundTransparency = 0.1
+wlIconBadge.BorderSizePixel = 0
+wlIconBadge.ZIndex = 52
+Instance.new("UICorner", wlIconBadge).CornerRadius = UDim.new(0, 9)
+addChasingMenuGlow(wlIconBadge, getgenv().TabIconChaseGradients, 1.2, true, 0.11)
+
+wlIcon = Instance.new("TextLabel", wlIconBadge)
+wlIcon.Name = "IconText"
+wlIcon.Size = UDim2.new(1, 0, 1, 0)
+wlIcon.BackgroundTransparency = 1
+wlIcon.Text = TAB_ICONS["Whitelist"] or "🛡️"
+wlIcon.Font = Enum.Font.GothamBlack
+wlIcon.TextSize = 15
+wlIcon.TextXAlignment = Enum.TextXAlignment.Center
+wlIcon.TextYAlignment = Enum.TextYAlignment.Center
+wlIcon.TextColor3 = Color3.fromRGB(220, 222, 235)
+wlIcon.ZIndex = 53
+
+wlTitle = Instance.new("TextLabel", wlTitleRow)
+wlTitle.Name = "Title"
+wlTitle.Size = UDim2.new(1, -60, 1, 0)
+wlTitle.Position = UDim2.new(0, 50, 0, 0)
+wlTitle.BackgroundTransparency = 1
+wlTitle.Text = "WHITELIST"
+wlTitle.TextColor3 = Themes.Lofi.Contrast
+wlTitle.TextSize = 18
+wlTitle.Font = Enum.Font.GothamBold
+wlTitle.TextXAlignment = Enum.TextXAlignment.Left
+wlTitle.TextYAlignment = Enum.TextYAlignment.Center
+wlTitle.ZIndex = 52
+EnableDrag(WhitelistPanel, wlTitleRow)
 
 local wlSelectedPlayer = nil
 
@@ -4196,6 +4498,8 @@ wlScrollPad.PaddingRight = UDim.new(0, 6)
 wlScrollPad.PaddingTop = UDim.new(0, 4)
 wlScrollPad.PaddingBottom = UDim.new(0, 4)
 
+applySakuraScrollFrameFeel(wlScroll, { direction = Enum.ScrollingDirection.Y })
+
 local function RefreshWhitelistUI()
     for _, c in ipairs(wlScroll:GetChildren()) do if c:IsA("Frame") then c:Destroy() end end
     wlSelectedPlayer = nil
@@ -4205,6 +4509,21 @@ local function RefreshWhitelistUI()
     local s = (CurrentTheme == "Sakura")
     local wlContentPanel = (s and Color3.new(1, 1, 1) or (CurrentTheme == "Galaxy" and Color3.fromRGB(24, 20, 40) or (CurrentTheme == "Lofi" and Color3.fromRGB(50, 24, 44) or theme.Accent)))
     wlTitle.TextColor3 = s and theme.Accent or theme.Contrast
+    if wlIconBadge and wlIconBadge:IsA("Frame") and wlIcon and wlIcon:IsA("TextLabel") then
+        if s then
+            wlIconBadge.BackgroundColor3 = Color3.fromRGB(255, 240, 248)
+            wlIcon.TextColor3 = theme.Accent
+        elseif CurrentTheme == "Galaxy" then
+            wlIconBadge.BackgroundColor3 = Color3.fromRGB(16, 14, 32)
+            wlIcon.TextColor3 = Color3.fromRGB(200, 205, 220)
+        elseif CurrentTheme == "Lofi" then
+            wlIconBadge.BackgroundColor3 = Color3.fromRGB(40, 22, 40)
+            wlIcon.TextColor3 = Color3.fromRGB(200, 205, 220)
+        else
+            wlIconBadge.BackgroundColor3 = Color3.fromRGB(28, 30, 42)
+            wlIcon.TextColor3 = Color3.new(1, 1, 1)
+        end
+    end
     wlActionBtn.BackgroundColor3 = theme.Accent
     WhitelistPanel.BackgroundColor3 = s and Color3.fromRGB(235, 235, 240) or ((CurrentTheme == "Galaxy" or CurrentTheme == "Lofi") and wlContentPanel or theme.Base)
     WhitelistPanel.BackgroundTransparency = s and 0.3 or ((CurrentTheme == "Galaxy" or CurrentTheme == "Lofi") and 0.3 or 0.6)
@@ -4359,13 +4678,13 @@ Services.Players.PlayerRemoving:Connect(function(p)
 end)
 
 do
-    -- Space below content area top before the first home card
+    -- Home: smaller top inset than other tab pages.
     do
         local homeScroll = TabPages["Home"]
         if homeScroll and homeScroll:IsA("ScrollingFrame") then
             local pgPad = homeScroll:FindFirstChildOfClass("UIPadding")
             if pgPad then
-                pgPad.PaddingTop = UDim.new(0, 12)
+                pgPad.PaddingTop = UDim.new(0, 3)
             end
         end
     end
@@ -4387,10 +4706,10 @@ Coming Soon.....
     HomeDash.ZIndex = 21
     Instance.new("UICorner", HomeDash).CornerRadius = UDim.new(0, 8)
     local homeDashPad = Instance.new("UIPadding", HomeDash)
-    homeDashPad.PaddingLeft = UDim.new(0, 8)
-    homeDashPad.PaddingRight = UDim.new(0, 8)
-    homeDashPad.PaddingTop = UDim.new(0, 8)
-    homeDashPad.PaddingBottom = UDim.new(0, 8)
+    homeDashPad.PaddingLeft = UDim.new(0, 6)
+    homeDashPad.PaddingRight = UDim.new(0, 6)
+    homeDashPad.PaddingTop = UDim.new(0, 6)
+    homeDashPad.PaddingBottom = UDim.new(0, 6)
     addContentChaseGlow(HomeDash, 1.4, true, 0.14)
 
     local inner = Instance.new("Frame", HomeDash)
@@ -4415,7 +4734,7 @@ Coming Soon.....
     local profileRow = Instance.new("Frame", inner)
     profileRow.Name = "HomeProfileRow"
     profileRow.LayoutOrder = 1
-    profileRow.Size = UDim2.new(1, 0, 0, 54)
+    profileRow.Size = UDim2.new(1, 0, 0, 50)
     profileRow.BackgroundTransparency = 1
     profileRow.ZIndex = 22
 
@@ -4492,19 +4811,72 @@ Coming Soon.....
     ConnectCore("HomeDisplayName", LocalPlayer:GetPropertyChangedSignal("DisplayName"), refreshHomeName)
     ConnectCore("HomeUserName", LocalPlayer:GetPropertyChangedSignal("Name"), refreshHomeName)
 
-    local regionLine = Instance.new("TextLabel", inner)
+    -- Single bottom row: region + date + clock stacked bottom-left; Luarmor bottom-right (reference layout).
+    local bottomBand = Instance.new("Frame", inner)
+    bottomBand.Name = "HomeBottomBand"
+    bottomBand.LayoutOrder = 2
+    bottomBand.Size = UDim2.new(1, 0, 0, 52)
+    bottomBand.BackgroundTransparency = 1
+    bottomBand.ZIndex = 22
+
+    local bandH = Instance.new("UIListLayout", bottomBand)
+    bandH.FillDirection = Enum.FillDirection.Horizontal
+    bandH.SortOrder = Enum.SortOrder.LayoutOrder
+    bandH.Padding = UDim.new(0, 6)
+    bandH.VerticalAlignment = Enum.VerticalAlignment.Top
+
+    local leftBottom = Instance.new("Frame", bottomBand)
+    leftBottom.Name = "HomeLeftBottom"
+    leftBottom.LayoutOrder = 1
+    leftBottom.Size = UDim2.new(0.52, -3, 1, 0)
+    leftBottom.BackgroundTransparency = 1
+    leftBottom.ZIndex = 22
+
+    local leftV = Instance.new("UIListLayout", leftBottom)
+    leftV.FillDirection = Enum.FillDirection.Vertical
+    leftV.SortOrder = Enum.SortOrder.LayoutOrder
+    leftV.Padding = UDim.new(0, 1)
+    leftV.HorizontalAlignment = Enum.HorizontalAlignment.Left
+
+    local regionLine = Instance.new("TextLabel", leftBottom)
     regionLine.Name = "HomeRegionLine"
-    regionLine.LayoutOrder = 3
-    regionLine.Size = UDim2.new(1, 0, 0, lineHeight)
+    regionLine.LayoutOrder = 1
+    regionLine.Size = UDim2.new(1, 0, 0, 17)
     regionLine.BackgroundTransparency = 1
     regionLine.Font = Enum.Font.GothamBold
-    regionLine.TextSize = lineTextSize
+    regionLine.TextSize = lineTextSize - 1
     regionLine.TextXAlignment = Enum.TextXAlignment.Left
     regionLine.TextYAlignment = Enum.TextYAlignment.Center
     regionLine.TextTruncate = Enum.TextTruncate.AtEnd
     regionLine.TextColor3 = Color3.new(1, 1, 1)
     regionLine.Text = "…"
     regionLine.ZIndex = 22
+
+    local dateLine = Instance.new("TextLabel", leftBottom)
+    dateLine.Name = "HomeDateLine"
+    dateLine.LayoutOrder = 2
+    dateLine.Size = UDim2.new(1, 0, 0, 16)
+    dateLine.BackgroundTransparency = 1
+    dateLine.Font = Enum.Font.GothamBold
+    dateLine.TextSize = lineTextSize - 1
+    dateLine.TextColor3 = Color3.new(1, 1, 1)
+    dateLine.TextXAlignment = Enum.TextXAlignment.Left
+    dateLine.TextYAlignment = Enum.TextYAlignment.Top
+    dateLine.TextTruncate = Enum.TextTruncate.AtEnd
+    dateLine.ZIndex = 22
+
+    local clockLine = Instance.new("TextLabel", leftBottom)
+    clockLine.Name = "HomeClockLine"
+    clockLine.LayoutOrder = 3
+    clockLine.Size = UDim2.new(1, 0, 0, 16)
+    clockLine.BackgroundTransparency = 1
+    clockLine.Font = Enum.Font.GothamBold
+    clockLine.TextSize = lineTextSize - 1
+    clockLine.TextColor3 = Color3.new(1, 1, 1)
+    clockLine.TextXAlignment = Enum.TextXAlignment.Left
+    clockLine.TextYAlignment = Enum.TextYAlignment.Top
+    clockLine.TextTruncate = Enum.TextTruncate.AtEnd
+    clockLine.ZIndex = 22
 
     task.defer(function()
         local LocalizationService = game:GetService("LocalizationService")
@@ -4610,20 +4982,99 @@ Coming Soon.....
         end
     end)
 
-    local timeLine = Instance.new("TextLabel", inner)
-    timeLine.Name = "HomeTimeLine"
-    timeLine.LayoutOrder = 4
-    timeLine.Size = UDim2.new(1, 0, 0, lineHeight)
-    timeLine.BackgroundTransparency = 1
-    timeLine.Font = Enum.Font.GothamBold
-    timeLine.TextSize = lineTextSize
-    timeLine.TextColor3 = Color3.new(1, 1, 1)
-    timeLine.TextXAlignment = Enum.TextXAlignment.Left
-    timeLine.TextYAlignment = Enum.TextYAlignment.Center
-    timeLine.TextTruncate = Enum.TextTruncate.AtEnd
-    timeLine.ZIndex = 22
+    local luarmorBox = Instance.new("Frame", bottomBand)
+    luarmorBox.Name = "HomeLuarmorBox"
+    luarmorBox.LayoutOrder = 2
+    luarmorBox.Size = UDim2.new(0.48, -3, 1, 0)
+    luarmorBox.BackgroundTransparency = 1
+    luarmorBox.ZIndex = 22
 
-    local function formatLocalTime()
+    local luarmorStack = Instance.new("UIListLayout", luarmorBox)
+    luarmorStack.FillDirection = Enum.FillDirection.Vertical
+    luarmorStack.SortOrder = Enum.SortOrder.LayoutOrder
+    luarmorStack.Padding = UDim.new(0, 1)
+    luarmorStack.HorizontalAlignment = Enum.HorizontalAlignment.Left
+
+    local headerRow = Instance.new("Frame", luarmorBox)
+    headerRow.Name = "HomeLuarmorHeaderRow"
+    headerRow.LayoutOrder = 1
+    headerRow.Size = UDim2.new(1, 0, 0, lineHeight - 8)
+    headerRow.BackgroundTransparency = 1
+    headerRow.ZIndex = 23
+    local headerH = Instance.new("UIListLayout", headerRow)
+    headerH.FillDirection = Enum.FillDirection.Horizontal
+    headerH.SortOrder = Enum.SortOrder.LayoutOrder
+    headerH.Padding = UDim.new(0, 4)
+
+    local keyHeader = Instance.new("TextLabel", headerRow)
+    keyHeader.Name = "HomeLuarmorKeyHeader"
+    keyHeader.Size = UDim2.new(0.5, -4, 1, 0)
+    keyHeader.BackgroundTransparency = 1
+    keyHeader.Font = Enum.Font.GothamBold
+    keyHeader.TextSize = lineTextSize - 2
+    keyHeader.TextColor3 = Color3.fromRGB(200, 205, 220)
+    keyHeader.TextXAlignment = Enum.TextXAlignment.Left
+    keyHeader.Text = "Key Type"
+    keyHeader.ZIndex = 23
+
+    local durHeader = Instance.new("TextLabel", headerRow)
+    durHeader.Name = "HomeLuarmorDurationHeader"
+    durHeader.Size = UDim2.new(0.5, -4, 1, 0)
+    durHeader.BackgroundTransparency = 1
+    durHeader.Font = Enum.Font.GothamBold
+    durHeader.TextSize = lineTextSize - 2
+    durHeader.TextColor3 = keyHeader.TextColor3
+    durHeader.TextXAlignment = Enum.TextXAlignment.Left
+    durHeader.Text = "Duration"
+    durHeader.ZIndex = 23
+
+    local valueRow = Instance.new("Frame", luarmorBox)
+    valueRow.Name = "HomeLuarmorValueRow"
+    valueRow.LayoutOrder = 2
+    valueRow.Size = UDim2.new(1, 0, 0, lineHeight - 2)
+    valueRow.BackgroundTransparency = 1
+    valueRow.ZIndex = 23
+    local valueH = Instance.new("UIListLayout", valueRow)
+    valueH.FillDirection = Enum.FillDirection.Horizontal
+    valueH.SortOrder = Enum.SortOrder.LayoutOrder
+    valueH.Padding = UDim.new(0, 4)
+
+    local keyVal = Instance.new("TextLabel", valueRow)
+    keyVal.Name = "HomeLuarmorKeyValue"
+    keyVal.Size = UDim2.new(0.5, -4, 1, 0)
+    keyVal.BackgroundTransparency = 1
+    keyVal.Font = Enum.Font.GothamBold
+    keyVal.TextSize = lineTextSize - 1
+    keyVal.TextColor3 = Color3.new(1, 1, 1)
+    keyVal.TextXAlignment = Enum.TextXAlignment.Left
+    keyVal.TextYAlignment = Enum.TextYAlignment.Top
+    keyVal.TextWrapped = true
+    keyVal.TextTruncate = Enum.TextTruncate.AtEnd
+    keyVal.Text = "—"
+    keyVal.ZIndex = 23
+
+    local durVal = Instance.new("TextLabel", valueRow)
+    durVal.Name = "HomeLuarmorDurationValue"
+    durVal.Size = UDim2.new(0.5, -4, 1, 0)
+    durVal.BackgroundTransparency = 1
+    durVal.Font = Enum.Font.GothamBold
+    durVal.TextSize = lineTextSize - 1
+    durVal.TextColor3 = Color3.new(1, 1, 1)
+    durVal.TextXAlignment = Enum.TextXAlignment.Left
+    durVal.TextYAlignment = Enum.TextYAlignment.Top
+    durVal.TextWrapped = true
+    durVal.TextTruncate = Enum.TextTruncate.AtEnd
+    durVal.Text = "—"
+    durVal.ZIndex = 23
+
+    getgenv().SakuraHomeLuarmorKeyValue = keyVal
+    getgenv().SakuraHomeLuarmorDurationValue = durVal
+
+    local function formatLocalDate()
+        local t = os.date("*t")
+        return string.format("%s, %s %d, %d", os.date("%A"), os.date("%B"), t.day, t.year)
+    end
+    local function formatLocalClock()
         local t = os.date("*t")
         local h24 = t.hour
         local ampm = (h24 >= 12) and "PM" or "AM"
@@ -4631,24 +5082,19 @@ Coming Soon.....
         if h12 == 0 then
             h12 = 12
         end
-        return string.format(
-            "%s, %s %d, %d  ·  %d:%02d %s",
-            os.date("%A"),
-            os.date("%B"),
-            t.day,
-            t.year,
-            h12,
-            t.min,
-            ampm
-        )
+        return string.format("%d:%02d %s", h12, t.min, ampm)
     end
-    timeLine.Text = formatLocalTime()
+    dateLine.Text = formatLocalDate()
+    clockLine.Text = formatLocalClock()
     task.spawn(function()
         while not getgenv().EliteHubV2_Shutdown do
             task.wait(1)
             pcall(function()
-                if timeLine and timeLine.Parent then
-                    timeLine.Text = formatLocalTime()
+                if dateLine and dateLine.Parent then
+                    dateLine.Text = formatLocalDate()
+                end
+                if clockLine and clockLine.Parent then
+                    clockLine.Text = formatLocalClock()
                 end
             end)
         end
@@ -4683,6 +5129,13 @@ Coming Soon.....
     bodyPad.PaddingBottom = UDim.new(0, 12)
 end
 
+pcall(function()
+	if HomeLuarmorFooter and ContentArea then
+		HomeLuarmorFooter.Parent = ContentArea
+		HomeLuarmorFooter.ZIndex = 100
+	end
+end)
+
 do
 
 Settings = {
@@ -4706,33 +5159,38 @@ end
 
 -- Separate function: keeps locals out of the top-level chunk (Luau 200 local register limit)
 local function _initEliteFeatureSections()
--- Aim tab: sub-tabs (Aimbot | Silent Aim) — pinned to top of the content pane (not inside the scroll canvas).
+-- Aim tab: sub-tabs — full-width row at top of the content pane (same placement as when pinned to ContentArea), but parented to the Aim scroll so they move with the tab.
+local aimScroll = TabPages["Aim"]
 local aimSubTabStrip = Instance.new("Frame")
 aimSubTabStrip.Name = "AimSubTabStrip"
 aimSubTabStrip.LayoutOrder = 0
 aimSubTabStrip.Size = UDim2.new(1, 0, 0, 42)
 aimSubTabStrip.BackgroundTransparency = 1
 aimSubTabStrip.ZIndex = 35
-aimSubTabStrip.Parent = ContentArea
-aimSubTabStrip.AnchorPoint = Vector2.new(0, 0)
-aimSubTabStrip.Position = UDim2.new(0, 0, 0, 0)
+if aimScroll then
+	aimSubTabStrip.Parent = aimScroll
+	local aimPageContent = aimScroll:FindFirstChild("PageContent")
+	if aimPageContent and aimPageContent:IsA("Frame") then
+		aimPageContent.LayoutOrder = 1
+	end
+	-- Match Settings: strip flush with top of content pane; 4px gap under strip (Settings scroll uses 46px top pad for 42px strip).
+	local aimPgPad = aimScroll:FindFirstChildOfClass("UIPadding")
+	if aimPgPad then
+		aimPgPad.PaddingTop = UDim.new(0, 0)
+	end
+	for _, c in ipairs(aimScroll:GetChildren()) do
+		if c:IsA("UIListLayout") then
+			c.Padding = UDim.new(0, 4)
+			break
+		end
+	end
+else
+	aimSubTabStrip.Parent = AimPg
+end
 do
 	local sp = Instance.new("UIPadding", aimSubTabStrip)
 	sp.PaddingLeft = UDim.new(0, 6)
 	sp.PaddingRight = UDim.new(0, 6)
-end
-local aimScrollForSubTabs = TabPages["Aim"]
-if aimScrollForSubTabs then
-	local pgPad = aimScrollForSubTabs:FindFirstChildOfClass("UIPadding")
-	if pgPad then
-		pgPad.PaddingTop = UDim.new(0, 46)
-	end
-	aimSubTabStrip.Visible = aimScrollForSubTabs.Visible
-	aimScrollForSubTabs:GetPropertyChangedSignal("Visible"):Connect(function()
-		aimSubTabStrip.Visible = aimScrollForSubTabs.Visible
-	end)
-else
-	aimSubTabStrip.Visible = false
 end
 
 local stripLayout = Instance.new("UIListLayout", aimSubTabStrip)
@@ -4939,760 +5397,6 @@ showVisualSubTab(1)
 
 local EspSec = EliteLib:CreateSection(visualPagePlayer, "")
 
--- ESP preview only: mini viewport in Visual tab (not world ESP). ViewportFrames often skip Instance.Highlight,
--- so we parent Highlight for parity and draw per-limb shell Parts (fill + darker outline) for a modern chams silhouette.
--- Clone humanoid uses GetAppliedDescription() so the rig matches your equipped avatar (avoids default grey “bloxy” look).
-do
-    getgenv().SakuraEspPreviewNonVisible = getgenv().SakuraEspPreviewNonVisible or false
-    local previewHost = Instance.new("Frame", EspSec)
-    previewHost.Name = "EspPreviewHost"
-    previewHost.Size = UDim2.new(1, 0, 0, 214)
-    previewHost.BackgroundTransparency = 1
-    previewHost.ClipsDescendants = true
-    previewHost.Visible = false
-    previewHost.LayoutOrder = 2
-    previewHost.ZIndex = 22
-
-    local vpb = Instance.new("Frame", previewHost)
-    vpb.Name = "EspPreviewBezel"
-    vpb.Size = UDim2.new(1, -8, 1, -8)
-    vpb.Position = UDim2.new(0, 4, 0, 4)
-    vpb.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
-    vpb.BackgroundTransparency = 0.08
-    vpb.BorderSizePixel = 0
-    vpb.ZIndex = 23
-    Instance.new("UICorner", vpb).CornerRadius = UDim.new(0, 10)
-    local vz = Instance.new("UIStroke", vpb)
-    vz.Thickness = 1
-    vz.Color = Color3.fromRGB(55, 55, 70)
-
-    local Viewport = Instance.new("ViewportFrame", vpb)
-    Viewport.Name = "EspPreviewViewport"
-    Viewport.Size = UDim2.new(1, -10, 1, -10)
-    Viewport.Position = UDim2.new(0, 5, 0, 5)
-    Viewport.BackgroundColor3 = Color3.fromRGB(35, 35, 42)
-    Viewport.BorderSizePixel = 0
-    Viewport.ZIndex = 24
-    Instance.new("UICorner", Viewport).CornerRadius = UDim.new(0, 8)
-    Viewport.Ambient = Color3.fromRGB(190, 195, 210)
-    Viewport.LightColor = Color3.fromRGB(245, 245, 250)
-    Viewport.LightDirection = Vector3.new(-0.35, -1, -0.25)
-
-    local WorldModel = Instance.new("WorldModel", Viewport)
-    local Camera = Instance.new("Camera", Viewport)
-    Viewport.CurrentCamera = Camera
-
-    local function syncViewportCameraSize()
-        local s = Viewport.AbsoluteSize
-        if s.X > 1 and s.Y > 1 then
-            pcall(function()
-                Camera.ViewportSize = Vector2.new(math.floor(s.X), math.floor(s.Y))
-            end)
-        end
-    end
-
-    Viewport:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-        if previewHost.Visible then
-            syncViewportCameraSize()
-        end
-    end)
-
-    -- 2D GUI must be parented to the ViewportFrame so it stacks above the 3D layer (sibling under vpb was unreliable).
-    local previewOverlay = Instance.new("Frame", Viewport)
-    previewOverlay.Name = "EspPreviewOverlay"
-    previewOverlay.Size = UDim2.new(1, 0, 1, 0)
-    previewOverlay.Position = UDim2.new(0, 0, 0, 0)
-    previewOverlay.BackgroundTransparency = 1
-    previewOverlay.Active = false
-    previewOverlay.ZIndex = 100
-    previewOverlay.ClipsDescendants = true
-
-    local espPreviewTag = Instance.new("TextLabel", previewOverlay)
-    espPreviewTag.Name = "EspPreviewTag"
-    espPreviewTag.BackgroundTransparency = 1
-    espPreviewTag.Font = Enum.Font.GothamBold
-    espPreviewTag.TextSize = 13
-    espPreviewTag.TextStrokeTransparency = 0.2
-    espPreviewTag.TextStrokeColor3 = Color3.new(0, 0, 0)
-    espPreviewTag.RichText = true
-    espPreviewTag.TextColor3 = Color3.new(1, 1, 1)
-    espPreviewTag.TextXAlignment = Enum.TextXAlignment.Center
-    espPreviewTag.TextYAlignment = Enum.TextYAlignment.Bottom
-    espPreviewTag.TextWrapped = true
-    espPreviewTag.AnchorPoint = Vector2.new(0.5, 1)
-    espPreviewTag.Size = UDim2.fromOffset(200, 50)
-    espPreviewTag.ZIndex = 101
-    espPreviewTag.Text = ""
-    espPreviewTag.Visible = false
-
-    local nvRow = Instance.new("Frame", previewOverlay)
-    nvRow.Name = "EspPreviewNvRow"
-    nvRow.AnchorPoint = Vector2.new(1, 1)
-    nvRow.Size = UDim2.fromOffset(132, 22)
-    nvRow.Position = UDim2.new(1, -4, 1, -4)
-    nvRow.BackgroundTransparency = 1
-    nvRow.ZIndex = 102
-
-    local nvLbl = Instance.new("TextLabel", nvRow)
-    nvLbl.Name = "NvLabel"
-    nvLbl.BackgroundTransparency = 1
-    nvLbl.Size = UDim2.new(1, -42, 1, 0)
-    nvLbl.Font = Enum.Font.Gotham
-    nvLbl.TextSize = 10
-    nvLbl.Text = "Non-visible"
-    nvLbl.TextXAlignment = Enum.TextXAlignment.Right
-    nvLbl.TextYAlignment = Enum.TextYAlignment.Center
-    nvLbl.ZIndex = 103
-
-    local nvTrack = Instance.new("TextButton", nvRow)
-    nvTrack.Name = "NvTrack"
-    nvTrack.AnchorPoint = Vector2.new(1, 0.5)
-    nvTrack.Position = UDim2.new(1, 0, 0.5, 0)
-    nvTrack.Size = UDim2.fromOffset(38, 18)
-    nvTrack.BackgroundColor3 = Color3.fromRGB(52, 52, 64)
-    nvTrack.BackgroundTransparency = 0.08
-    nvTrack.BorderSizePixel = 0
-    nvTrack.Text = ""
-    nvTrack.AutoButtonColor = false
-    nvTrack.ZIndex = 103
-    Instance.new("UICorner", nvTrack).CornerRadius = UDim.new(1, 0)
-
-    local nvKnob = Instance.new("Frame", nvTrack)
-    nvKnob.Name = "NvKnob"
-    nvKnob.AnchorPoint = Vector2.new(0, 0.5)
-    nvKnob.Size = UDim2.fromOffset(14, 14)
-    nvKnob.Position = UDim2.new(0, 2, 0.5, 0)
-    nvKnob.BackgroundColor3 = Color3.fromRGB(248, 248, 255)
-    nvKnob.BorderSizePixel = 0
-    nvKnob.ZIndex = 104
-    Instance.new("UICorner", nvKnob).CornerRadius = UDim.new(1, 0)
-
-    local function syncNvToggleVisual(themeName)
-        local t = Themes[themeName]
-        if not (t and nvTrack and nvKnob and nvLbl) then
-            return
-        end
-        local on = getgenv().SakuraEspPreviewNonVisible == true
-        nvTrack.BackgroundColor3 = on and t.Accent or Color3.fromRGB(52, 52, 66)
-        nvKnob.Position = on and UDim2.new(0, 22, 0.5, 0) or UDim2.new(0, 2, 0.5, 0)
-        nvKnob.BackgroundColor3 = themeName == "Sakura" and Color3.new(1, 1, 1) or Color3.fromRGB(248, 248, 255)
-        nvLbl.TextColor3 = themeName == "Sakura" and t.Contrast or Color3.fromRGB(210, 210, 228)
-    end
-
-    local function applyEspPreviewTheme(themeName)
-        local t = Themes[themeName]
-        if not (t and vpb and vpb.Parent) then
-            return
-        end
-        local cp = (
-            themeName == "Sakura" and Color3.new(1, 1, 1)
-            or (themeName == "Galaxy" and Color3.fromRGB(24, 20, 40))
-            or (themeName == "Lofi" and Color3.fromRGB(50, 24, 44) or t.Base)
-        )
-        vpb.BackgroundColor3 = cp:Lerp(Color3.new(0, 0, 0), 0.2)
-        vpb.BackgroundTransparency = themeName == "Sakura" and 0.04 or 0.08
-        vz.Color = t.Accent
-        -- Slightly lighter viewport floor so flat chams read like a clean studio shot (reference image).
-        Viewport.BackgroundColor3 = cp:Lerp(Color3.fromRGB(228, 228, 234), 0.55)
-        Viewport.Ambient = cp:Lerp(Color3.fromRGB(200, 200, 215), 0.45)
-        Viewport.LightColor = Color3.fromRGB(252, 252, 255)
-        syncNvToggleVisual(themeName)
-    end
-
-    getgenv().SakuraEspPreview_ApplyTheme = applyEspPreviewTheme
-    task.defer(function()
-        applyEspPreviewTheme(CurrentTheme)
-    end)
-
-    nvTrack.MouseButton1Click:Connect(function()
-        getgenv().SakuraEspPreviewNonVisible = not (getgenv().SakuraEspPreviewNonVisible == true)
-        syncNvToggleVisual(CurrentTheme)
-    end)
-
-    local ConfigPrev = { AutoRotate = true, RotSpeed = 0.01, CamHeight = -0.5 }
-    local ZoomDistance = 4.65
-    local CloneCharacter = nil
-    local RealCharacter = nil
-    local CurrentRotY = 0
-    local PartMap = {}
-    local FreezeByClonePart = {}
-    -- Fills the gap where ViewportFrame ignores Highlight: per-part fill + rim (modern chams silhouette, not a box).
-    local EspPreviewMimicMap = {}
-    local espPreviewChamAcc = 0
-
-    local function pathUnderModel(model, inst)
-        local names = {}
-        local node = inst
-        while node and node ~= model do
-            table.insert(names, 1, node.Name)
-            node = node.Parent
-        end
-        return table.concat(names, "\1")
-    end
-
-    local function findByPath(model, path)
-        if path == "" then
-            return model
-        end
-        local cur = model
-        for name in string.gmatch(path, "[^\1]+") do
-            cur = cur and cur:FindFirstChild(name)
-        end
-        return cur
-    end
-
-    local function rebuildPartMap()
-        table.clear(PartMap)
-        if not RealCharacter or not CloneCharacter then
-            return
-        end
-        for _, d in ipairs(RealCharacter:GetDescendants()) do
-            if d:IsA("BasePart") then
-                local p = pathUnderModel(RealCharacter, d)
-                local c = findByPath(CloneCharacter, p)
-                if c and c:IsA("BasePart") then
-                    PartMap[d] = c
-                end
-            end
-        end
-    end
-
-    local function clearFreeze()
-        table.clear(FreezeByClonePart)
-    end
-
-    local function captureFreeze()
-        clearFreeze()
-        if not RealCharacter or not CloneCharacter then
-            return
-        end
-        local rr = RealCharacter:FindFirstChild("HumanoidRootPart")
-        if not rr or not rr:IsA("BasePart") then
-            return
-        end
-        for realPart, clonePart in pairs(PartMap) do
-            if realPart:IsA("BasePart") and clonePart:IsA("BasePart") and realPart.Parent and clonePart.Parent then
-                local texId = nil
-                if realPart:IsA("MeshPart") then
-                    texId = realPart.TextureID
-                end
-                FreezeByClonePart[clonePart] = {
-                    rel = rr.CFrame:ToObjectSpace(realPart.CFrame),
-                    size = realPart.Size,
-                    color = realPart.Color,
-                    material = realPart.Material,
-                    baseTrans = realPart.Transparency,
-                    texId = texId,
-                }
-            end
-        end
-    end
-
-    local function ensureArchivable(root)
-        pcall(function()
-            root.Archivable = true
-        end)
-        for _, d in ipairs(root:GetDescendants()) do
-            pcall(function()
-                d.Archivable = true
-            end)
-        end
-    end
-
-    local function destroyEspPreviewShellLayer()
-        pcall(function()
-            local legacy = WorldModel:FindFirstChild("EspPreviewShells")
-            if legacy then
-                legacy:Destroy()
-            end
-        end)
-        pcall(function()
-            local m = WorldModel:FindFirstChild("EspPreviewMimic")
-            if m then
-                m:Destroy()
-            end
-        end)
-        for _, pair in pairs(EspPreviewMimicMap) do
-            if type(pair) == "table" then
-                for _, sh in ipairs(pair) do
-                    pcall(function()
-                        sh:Destroy()
-                    end)
-                end
-            end
-        end
-        table.clear(EspPreviewMimicMap)
-        if CloneCharacter and CloneCharacter.Parent then
-            local hl = CloneCharacter:FindFirstChild("EspPreviewHl")
-            if hl then
-                pcall(function()
-                    hl:Destroy()
-                end)
-            end
-        end
-    end
-
-    local function previewEspAccentColor()
-        local cols = GetEspColors()
-        if not cols then
-            return Color3.fromRGB(255, 255, 255)
-        end
-        if getgenv().SakuraEspPreviewNonVisible == true then
-            return cols.Hidden
-        end
-        return cols.Visible
-    end
-
-    -- ViewportFrame usually skips Highlight; shells provide the visible chams. Tuned for solid fill + crisp rim.
-    local function syncEspPreviewShellOverlays()
-        if not CloneCharacter or not CloneCharacter.Parent then
-            destroyEspPreviewShellLayer()
-            return
-        end
-        pcall(function()
-            local legacy = WorldModel:FindFirstChild("EspPreviewShells")
-            if legacy then
-                legacy:Destroy()
-            end
-        end)
-        if not getgenv().AutoESP then
-            local hlOff = CloneCharacter:FindFirstChild("EspPreviewHl")
-            if hlOff then
-                pcall(function()
-                    hlOff:Destroy()
-                end)
-            end
-            pcall(function()
-                local m = WorldModel:FindFirstChild("EspPreviewMimic")
-                if m then
-                    m:Destroy()
-                end
-            end)
-            table.clear(EspPreviewMimicMap)
-            return
-        end
-        local accent = previewEspAccentColor()
-        -- Reference “modern chams”: flat pastel fill + slightly darker same-hue rim (not a black lerp).
-        local outlineCol = Color3.new(
-            math.clamp(accent.R * 0.7, 0, 1),
-            math.clamp(accent.G * 0.76, 0, 1),
-            math.clamp(accent.B * 0.82, 0, 1)
-        )
-        local fillT = 0
-        local rimT = 0.12
-        local fillScale = 1.004
-        local rimScale = 1.052
-        local hl = CloneCharacter:FindFirstChild("EspPreviewHl")
-        if not hl then
-            hl = Instance.new("Highlight")
-            hl.Name = "EspPreviewHl"
-            hl.Parent = CloneCharacter
-            pcall(function()
-                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            end)
-        end
-        hl.Enabled = true
-        hl.FillColor = accent
-        hl.OutlineColor = outlineCol
-        hl.FillTransparency = fillT
-        hl.OutlineTransparency = 0.05
-
-        local folder = WorldModel:FindFirstChild("EspPreviewMimic")
-        if not folder then
-            folder = Instance.new("Folder")
-            folder.Name = "EspPreviewMimic"
-            folder.Parent = WorldModel
-        end
-        local camCf = Viewport.CurrentCamera and Viewport.CurrentCamera.CFrame
-        local camPos = camCf and camCf.Position
-        local seen = {}
-        -- Do not use part.Transparency here: preview forces the real mesh to T=1 for silhouette mode,
-        -- which would make every limb look "invisible" and delete all shells. Use freeze snap baseTrans instead.
-        for clonePart, snap in pairs(FreezeByClonePart) do
-            if clonePart.Parent and clonePart:IsA("BasePart") and clonePart.Name ~= "HumanoidRootPart" then
-                local baseTrans = snap.baseTrans
-                if type(baseTrans) ~= "number" then
-                    baseTrans = 0
-                end
-                if baseTrans < 0.99 then
-                    seen[clonePart] = true
-                    local part = clonePart
-                    local toCam = camPos and (camPos - part.Position)
-                    local off = (toCam and toCam.Magnitude > 0.05) and toCam.Unit * 0.022 or Vector3.zero
-                    local pair = EspPreviewMimicMap[part]
-                    local shellFill, shellOut
-                    if not pair or type(pair) ~= "table" or not pair[1] or not pair[1].Parent then
-                        shellOut = Instance.new("Part")
-                        shellOut.Name = "EspPrevMimicOut"
-                        shellOut.Anchored = true
-                        shellOut.CanCollide = false
-                        shellOut.CanQuery = false
-                        shellOut.CastShadow = false
-                        shellOut.Material = Enum.Material.SmoothPlastic
-                        shellOut.Parent = folder
-                        shellFill = Instance.new("Part")
-                        shellFill.Name = "EspPrevMimicFill"
-                        shellFill.Anchored = true
-                        shellFill.CanCollide = false
-                        shellFill.CanQuery = false
-                        shellFill.CastShadow = false
-                        shellFill.Material = Enum.Material.SmoothPlastic
-                        shellFill.Parent = folder
-                        EspPreviewMimicMap[part] = { shellFill, shellOut }
-                    else
-                        shellFill, shellOut = pair[1], pair[2]
-                    end
-                    shellFill.Material = Enum.Material.SmoothPlastic
-                    shellOut.Material = Enum.Material.SmoothPlastic
-                    shellFill.CFrame = part.CFrame + off
-                    shellFill.Size = part.Size * fillScale
-                    shellFill.Color = accent
-                    shellFill.Transparency = fillT
-                    shellOut.CFrame = part.CFrame + off * 1.22
-                    shellOut.Size = part.Size * rimScale
-                    shellOut.Color = outlineCol
-                    shellOut.Transparency = rimT
-                end
-            end
-        end
-        for limb, pair in pairs(EspPreviewMimicMap) do
-            if not seen[limb] then
-                if type(pair) == "table" then
-                    for _, sh in ipairs(pair) do
-                        pcall(function()
-                            sh:Destroy()
-                        end)
-                    end
-                end
-                EspPreviewMimicMap[limb] = nil
-            end
-        end
-        pcall(function()
-            if folder and folder.Parent == WorldModel then
-                folder.Parent = nil
-                folder.Parent = WorldModel
-            end
-        end)
-    end
-
-    local function hideEspPreviewTag()
-        espPreviewTag.Text = ""
-        espPreviewTag.Visible = false
-    end
-
-    local function syncEspPreviewTagText()
-        if not CloneCharacter or not CloneCharacter.Parent then
-            hideEspPreviewTag()
-            return
-        end
-        local g = getgenv()
-        local showAny = g.ESPShowNames or g.ESPShowDistance or g.ESPShowHealth
-        if not showAny then
-            hideEspPreviewTag()
-            return
-        end
-        local espColor = previewEspAccentColor()
-        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        local previewDist = 0
-        local hpStr = hum and math.floor(hum.Health) or 0
-        local espText = ""
-        if g.ESPShowNames then
-            espText = LocalPlayer.Name
-        end
-        if g.ESPShowDistance then
-            local distColor = espColor
-            local r = math.floor(distColor.R * 255)
-            local gg = math.floor(distColor.G * 255)
-            local b = math.floor(distColor.B * 255)
-            espText = espText .. (espText ~= "" and "\n" or "") .. "<font color='rgb(" .. r .. "," .. gg .. "," .. b .. ")'>" .. tostring(previewDist) .. "m</font>"
-        end
-        if g.ESPShowHealth then
-            espText = espText .. (espText ~= "" and " | " or "") .. "<font color='rgb(100,255,100)'>" .. tostring(hpStr) .. " HP</font>"
-        end
-        espPreviewTag.Text = espText
-        espPreviewTag.TextColor3 = espColor
-    end
-
-    local function espPreviewWorldToOverlayPx(cam, worldPos, vw, vh)
-        local look = cam.CFrame.LookVector
-        local rel = worldPos - cam.CFrame.Position
-        local depth = rel:Dot(look)
-        if depth < 0.04 then
-            return nil
-        end
-        local rx = rel:Dot(cam.CFrame.RightVector)
-        local ry = rel:Dot(cam.CFrame.UpVector)
-        local fov = math.rad(cam.FieldOfView)
-        local tanHalf = math.tan(fov * 0.5)
-        local aspect = vw / math.max(vh, 1e-3)
-        local ndcX = (rx / depth) / (tanHalf * aspect)
-        local ndcY = (ry / depth) / tanHalf
-        local px = (0.5 + 0.5 * ndcX) * vw
-        local py = (0.5 - 0.5 * ndcY) * vh
-        return px, py
-    end
-
-    local function positionEspPreviewTag()
-        local g = getgenv()
-        if espPreviewTag.Text == "" or not (g.ESPShowNames or g.ESPShowDistance or g.ESPShowHealth) then
-            espPreviewTag.Visible = false
-            return
-        end
-        local cam = Viewport.CurrentCamera
-        local head = CloneCharacter and CloneCharacter:FindFirstChild("Head", true)
-        if not (cam and head and head:IsA("BasePart") and previewOverlay.Parent) then
-            espPreviewTag.Visible = false
-            return
-        end
-        local vw = Viewport.AbsoluteSize.X
-        local vh = Viewport.AbsoluteSize.Y
-        if vw < 1 or vh < 1 then
-            espPreviewTag.Visible = false
-            return
-        end
-        local world = (head.CFrame * CFrame.new(0, head.Size.Y * 0.62 + 0.55, 0)).Position
-        local vec, _onScreen = cam:WorldToViewportPoint(world)
-        local vsOk = cam.ViewportSize.X > 2 and cam.ViewportSize.Y > 2
-        local px, py
-        if vec.Z > 0 and vsOk then
-            px, py = vec.X, vec.Y
-        else
-            local mx, my = espPreviewWorldToOverlayPx(cam, world, vw, vh)
-            if not mx then
-                espPreviewTag.Visible = false
-                return
-            end
-            px, py = mx, my
-        end
-        px = math.clamp(px, 2, math.max(vw - 2, 2))
-        py = math.clamp(py, 2, math.max(vh - 2, 2))
-        espPreviewTag.Visible = true
-        espPreviewTag.Position = UDim2.new(0, px, 0, py)
-    end
-
-    local function SetupCharacter()
-        destroyEspPreviewShellLayer()
-        WorldModel:ClearAllChildren()
-        table.clear(PartMap)
-        clearFreeze()
-        hideEspPreviewTag()
-        CloneCharacter = nil
-
-        RealCharacter = LocalPlayer.Character
-        if not RealCharacter then
-            return
-        end
-        if not RealCharacter:FindFirstChild("HumanoidRootPart") then
-            task.wait(0.15)
-            if not RealCharacter:FindFirstChild("HumanoidRootPart") then
-                return
-            end
-        end
-
-        ensureArchivable(RealCharacter)
-        RealCharacter.Archivable = true
-        local ok, clone = pcall(function()
-            return RealCharacter:Clone()
-        end)
-        if not ok or not clone then
-            return
-        end
-        CloneCharacter = clone
-
-        for _, part in ipairs(CloneCharacter:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.Anchored = true
-                part.CanCollide = false
-                part.CanQuery = false
-            end
-            if part:IsA("Script") or part:IsA("LocalScript") or part:IsA("Sound") then
-                part:Destroy()
-            end
-        end
-
-        for _, m in ipairs(CloneCharacter:GetDescendants()) do
-            if m:IsA("Motor6D") then
-                m:Destroy()
-            end
-        end
-
-        local hum = CloneCharacter:FindFirstChildOfClass("Humanoid")
-        if hum then
-            pcall(function()
-                hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-                hum.HealthDisplayDistance = 0
-                hum.NameDisplayDistance = 0
-                hum.AutoRotate = false
-            end)
-            pcall(function()
-                hum.NameOcclusion = Enum.NameOcclusionMode.OccludeAll
-            end)
-            local anim = hum:FindFirstChildOfClass("Animator")
-            if anim then
-                anim:Destroy()
-            end
-            pcall(function()
-                local srcHum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if srcHum then
-                    local desc = srcHum:GetAppliedDescription()
-                    if desc then
-                        hum:ApplyDescription(desc)
-                    end
-                end
-            end)
-        end
-
-        local Light = Instance.new("PointLight")
-        Light.Brightness = 0.85
-        Light.Range = 14
-        local hrp = CloneCharacter:FindFirstChild("HumanoidRootPart", true)
-        if hrp and hrp:IsA("BasePart") then
-            Light.Parent = hrp
-        end
-
-        CloneCharacter.Parent = WorldModel
-        for _, d in ipairs(CloneCharacter:GetDescendants()) do
-            if (d:IsA("BillboardGui") and d.Name == "EspPreviewBillboard")
-                or (d:IsA("Highlight") and (d.Name == "EspPreviewHighlight" or d.Name == "EliteHubHighlight"))
-            then
-                d:Destroy()
-            end
-        end
-        rebuildPartMap()
-        captureFreeze()
-        syncEspPreviewTagText()
-        task.defer(syncViewportCameraSize)
-
-        task.delay(0.75, function()
-            if CloneCharacter and CloneCharacter.Parent == WorldModel and RealCharacter and RealCharacter.Parent then
-                rebuildPartMap()
-                captureFreeze()
-                syncEspPreviewTagText()
-            end
-        end)
-    end
-
-    getgenv().SakuraEspPreview_SetHostVisible = function(vis)
-        previewHost.Visible = vis and true or false
-        if vis then
-            task.defer(function()
-                SetupCharacter()
-                syncViewportCameraSize()
-            end)
-        else
-            destroyEspPreviewShellLayer()
-            WorldModel:ClearAllChildren()
-            CloneCharacter = nil
-            table.clear(PartMap)
-            clearFreeze()
-            hideEspPreviewTag()
-        end
-    end
-
-    LocalPlayer.CharacterAdded:Connect(function(newChar)
-        RealCharacter = newChar
-        if not previewHost.Visible then
-            return
-        end
-        task.wait(0.35)
-        SetupCharacter()
-    end)
-
-    ConnectCore("SakuraEspPreview", Services.RunService.RenderStepped, function(dt)
-        if not previewHost.Visible or not previewHost.Parent then
-            return
-        end
-        if not CloneCharacter or not CloneCharacter.Parent then
-            return
-        end
-
-        local aw = Viewport.AbsoluteSize.X
-        local ah = Viewport.AbsoluteSize.Y
-        if aw > 1 and ah > 1 then
-            local vs = Camera.ViewportSize
-            if math.abs(vs.X - aw) > 0.5 or math.abs(vs.Y - ah) > 0.5 then
-                syncViewportCameraSize()
-            end
-        end
-
-        if ConfigPrev.AutoRotate then
-            CurrentRotY += ConfigPrev.RotSpeed
-        end
-
-        local g = getgenv()
-        local espOn = g.AutoESP == true
-        for clonePart, snap in pairs(FreezeByClonePart) do
-            if clonePart.Parent then
-                clonePart.CFrame = snap.rel
-                clonePart.Size = snap.size
-                if snap.texId and clonePart:IsA("MeshPart") and clonePart.TextureID ~= snap.texId then
-                    pcall(function()
-                        clonePart.TextureID = snap.texId
-                    end)
-                end
-                if clonePart.Name == "HumanoidRootPart" then
-                    clonePart.Transparency = 1
-                elseif espOn then
-                    clonePart.Transparency = 1
-                else
-                    clonePart.Transparency = snap.baseTrans or 0
-                    clonePart.Color = snap.color
-                    clonePart.Material = snap.material
-                end
-            end
-        end
-        if espOn and CloneCharacter and CloneCharacter.Parent then
-            for _, d in ipairs(CloneCharacter:GetDescendants()) do
-                if d:IsA("BasePart") and d.Name ~= "HumanoidRootPart" then
-                    d.Transparency = 1
-                end
-            end
-        end
-
-        espPreviewChamAcc += (type(dt) == "number" and dt) or 0
-        if espOn then
-            -- Keep shells glued to the clone every frame (flat silhouette); full rebuild is cheap for one rig.
-            if espPreviewChamAcc >= 0.03 then
-                espPreviewChamAcc = 0
-                syncEspPreviewShellOverlays()
-            end
-        else
-            espPreviewChamAcc = 0
-            destroyEspPreviewShellLayer()
-        end
-
-        local CloneRoot = CloneCharacter:FindFirstChild("HumanoidRootPart", true)
-        if not CloneRoot or not CloneRoot:IsA("BasePart") then
-            return
-        end
-
-        local okBox, boxCf, boxSize = pcall(function()
-            return CloneCharacter:GetBoundingBox()
-        end)
-        local focus = (okBox and boxCf) and boxCf.Position or CloneRoot.Position
-        local extent = (okBox and boxSize) and math.max(boxSize.X, boxSize.Y, boxSize.Z) or 5
-        local distance = math.clamp(ZoomDistance + extent * 0.68, 6.1, 22)
-        local h = ConfigPrev.CamHeight
-        local camYaw = ConfigPrev.AutoRotate and CurrentRotY or 0
-        local offset = CFrame.Angles(0, camYaw, 0) * CFrame.new(0, h, distance)
-        local camPos = focus + offset.Position
-        Camera.CFrame = CFrame.lookAt(camPos, focus)
-        Camera.FieldOfView = 52
-
-        syncEspPreviewTagText()
-        positionEspPreviewTag()
-    end)
-end
-
-local tEspPreview = EliteLib:CreateToggle(EspSec, "ESP Preview", function(s)
-    getgenv().SakuraNotifySuppress = (getgenv().SakuraNotifySuppress or 0) + 1
-    getgenv().SakuraEspPreviewEnabled = s
-    getgenv().SakuraEspPreview_SetHostVisible(s)
-    task.defer(function()
-        getgenv().SakuraNotifySuppress = math.max(0, (getgenv().SakuraNotifySuppress or 1) - 1)
-    end)
-end, "ESP Preview")
-tEspPreview.LayoutOrder = 1
 
 local tEnableEsp = EliteLib:CreateToggle(EspSec, "Show Chams", function(s)
     getgenv().AutoESP = s
@@ -5704,22 +5408,22 @@ local tEnableEsp = EliteLib:CreateToggle(EspSec, "Show Chams", function(s)
         end
     end
 end, "Chams")
-tEnableEsp.LayoutOrder = 3
+tEnableEsp.LayoutOrder = 1
 
 local tEspNames = EliteLib:CreateToggle(EspSec, "Show Names", function(s)
     getgenv().ESPShowNames = s
 end, "Show Names")
-tEspNames.LayoutOrder = 4
+tEspNames.LayoutOrder = 2
 
 local tEspDist = EliteLib:CreateToggle(EspSec, "Show Distance", function(s)
     getgenv().ESPShowDistance = s
 end, "Show Distance")
-tEspDist.LayoutOrder = 5
+tEspDist.LayoutOrder = 3
 
 local tEspHealth = EliteLib:CreateToggle(EspSec, "Show Health", function(s)
     getgenv().ESPShowHealth = s
 end, "Show Health")
-tEspHealth.LayoutOrder = 6
+tEspHealth.LayoutOrder = 4
 
 local NpcEspSec = EliteLib:CreateSection(visualPageNpc, "")
 EliteLib:CreateToggle(NpcEspSec, "Show Chams", function(s)
@@ -5897,6 +5601,7 @@ do
     scrollFrame.ClipsDescendants = true
     scrollFrame.ScrollingDirection = Enum.ScrollingDirection.Y
     scrollFrame.ZIndex = 22
+    applySakuraScrollFrameFeel(scrollFrame, { direction = Enum.ScrollingDirection.Y })
     Instance.new("UIListLayout", scrollFrame).Padding = UDim.new(0, 5)
 
     local TABS = {{"All", "🌐 ALL"}, {"Small", "🟢 SM"}, {"Good Ping", "⚡ FAST"}}
@@ -6608,7 +6313,6 @@ do
         local chipVis = MenuOpenChip and MenuOpenChip.Visible
         local popVis = (ScannerHUD and ScannerHUD.Visible)
             or (RemoteHUD and RemoteHUD.Visible)
-            or (BuyersHUD and BuyersHUD.Visible)
             or (SpectateHUD and SpectateHUD.Visible)
         if not (mainVis or statsVis or scanVis or wlVis or popVis or wmVis or chipVis) then
             return
@@ -6719,6 +6423,7 @@ MenuMockFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 MenuMockFrame.ZIndex = 22
 MenuMockFrame.ScrollBarThickness = 2
 MenuMockFrame.ScrollBarImageTransparency = 0.3
+applySakuraScrollFrameFeel(MenuMockFrame, { direction = Enum.ScrollingDirection.Y })
 Instance.new("UICorner", MenuMockFrame).CornerRadius = UDim.new(0, 8)
 Instance.new("UIListLayout", MenuMockFrame).Padding = UDim.new(0, 5)
 
@@ -7591,268 +7296,6 @@ local function RemoteExecute(target)
     end
 end
 
--- Buyers: same layout as Elite Hub — workspace.Map.Misc.<NPC>.UpperTorso.Handler (ProximityPrompt).
--- Optional: getgenv().SakuraMiscLootBuyerFolder / SakuraMiscGunBuyerFolder
---           getgenv().SakuraMiscGunBuyerTryNames = {"AltFolder"}  -- only if your map uses a different folder name
---           getgenv().SakuraBuyersSkipVirtualKey = true  -- only fireproximityprompt (no synthetic E spam)
---           getgenv().SakuraBuyerFreezeFrames = 36      -- anchored freeze length in Heartbeats (default 36, clamp 20–90)
---           getgenv().SakuraBuyerBurstFrames / SakuraBuyerFaceFrames  -- also set freeze length if FreezeFrames unset
---           getgenv().SakuraBuyerESpamPerHeartbeat = 16 -- full E down/up taps each Heartbeat while frozen (default 16, clamp 1–50)
---           getgenv().SakuraBuyersSkipReturnSnap = true  -- do not CFrame back to originalCF after
-local function ResolveMiscNpcFolder(misc, folderName)
-    if type(folderName) ~= "string" or folderName == "" then
-        return nil
-    end
-    local npc = misc:FindFirstChild(folderName)
-    if npc then
-        return npc
-    end
-    local want = string.lower(folderName)
-    for _, c in ipairs(misc:GetChildren()) do
-        if string.lower(c.Name) == want then
-            return c
-        end
-    end
-    return nil
-end
-
-local function FindHandlerOnTorso(torso)
-    if not torso then
-        return nil
-    end
-    local h = torso:FindFirstChild("Handler")
-    if h and h:IsA("ProximityPrompt") then
-        return h
-    end
-    return nil
-end
-
-local function FindMiscBuyerHandler(folderName)
-    if type(folderName) ~= "string" or folderName == "" then
-        return nil
-    end
-    local map = workspace:FindFirstChild("Map")
-    local misc = map and map:FindFirstChild("Misc")
-    if not misc then
-        return nil
-    end
-    local npc = ResolveMiscNpcFolder(misc, folderName)
-    if not npc then
-        return nil
-    end
-
-    local pr = FindHandlerOnTorso(npc:FindFirstChild("UpperTorso"))
-    if pr then
-        return pr
-    end
-    for _, torsoName in ipairs({ "Torso", "HumanoidRootPart", "LowerTorso" }) do
-        pr = FindHandlerOnTorso(npc:FindFirstChild(torsoName))
-        if pr then
-            return pr
-        end
-    end
-    for _, d in ipairs(npc:GetDescendants()) do
-        if d:IsA("ProximityPrompt") and d.Name == "Handler" then
-            return d
-        end
-    end
-    return nil
-end
-
-local function BuyerTeleportAndPress(prompt)
-    local hrp = GetHRP()
-    local char = LocalPlayer.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum or not prompt or not prompt:IsA("ProximityPrompt") then
-        warn("[Sakura Buyers] Character or prompt missing.")
-        return
-    end
-    local part = ResolvePromptPart(prompt)
-    if not part then
-        warn("[Sakura Buyers] Could not resolve BasePart for prompt " .. tostring(prompt:GetFullName()))
-        return
-    end
-    local g = getgenv and getgenv() or _G
-    local originalCF = hrp.CFrame
-    local distToNPC = (hrp.Position - part.Position).Magnitude
-    local origAuto = hum.AutoRotate
-    local origHold = prompt.HoldDuration
-    local origMaxDist = prompt.MaxActivationDistance
-    local origLOS = nil
-    pcall(function()
-        origLOS = prompt.RequiresLineOfSight
-        prompt.RequiresLineOfSight = false
-    end)
-    pcall(function()
-        prompt.MaxActivationDistance = math.max(origMaxDist, 28)
-    end)
-
-    pcall(function()
-        prompt.HoldDuration = 0
-    end)
-
-    local standPos = (part.CFrame * CFrame.new(0, 0, 3)).Position
-    local lookAt = part.Position + Vector3.new(0, 1.2, 0)
-    local faceCF = CFrame.lookAt(standPos, lookAt)
-
-    local origAnchored = hrp.Anchored
-    local origPlatform = hum.PlatformStand
-
-    local freezeFrames = 36
-    if type(g.SakuraBuyerFreezeFrames) == "number" then
-        freezeFrames = math.clamp(math.floor(g.SakuraBuyerFreezeFrames + 0.5), 20, 90)
-    elseif type(g.SakuraBuyerBurstFrames) == "number" then
-        freezeFrames = math.clamp(math.floor(g.SakuraBuyerBurstFrames + 0.5), 20, 90)
-    elseif type(g.SakuraBuyerFaceFrames) == "number" then
-        freezeFrames = math.clamp(math.floor(g.SakuraBuyerFaceFrames + 0.5), 20, 90)
-    end
-
-    local key = Enum.KeyCode.E
-    if not g.SakuraBuyersSkipVirtualKey then
-        local k = prompt.KeyboardKeyCode
-        if k ~= nil and k ~= Enum.KeyCode.Unknown then
-            key = k
-        end
-    end
-    local vim = Services.VirtualInputManager
-
-    local eSpamPerBeat = 16
-    if type(g.SakuraBuyerESpamPerHeartbeat) == "number" then
-        eSpamPerBeat = math.clamp(math.floor(g.SakuraBuyerESpamPerHeartbeat + 0.5), 1, 50)
-    end
-
-    local function firePrompt()
-        pcall(function()
-            fireproximityprompt(prompt)
-        end)
-    end
-
-    local function spamETaps(count)
-        if g.SakuraBuyersSkipVirtualKey then
-            return
-        end
-        pcall(function()
-            for _ = 1, count do
-                vim:SendKeyEvent(true, key, false, game)
-                vim:SendKeyEvent(false, key, false, game)
-            end
-        end)
-    end
-
-    -- Short anchored freeze: AC cannot drag you as fast; spam prompt + many E taps every Heartbeat.
-    pcall(function()
-        hum.PlatformStand = true
-        hum.AutoRotate = false
-        hrp.Anchored = true
-        hrp.CFrame = faceCF
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end)
-    Services.RunService.Heartbeat:Wait()
-    Services.RunService.Heartbeat:Wait()
-    spamETaps(math.min(eSpamPerBeat, 24))
-
-    for _ = 1, freezeFrames do
-        if not hrp.Parent then
-            break
-        end
-        pcall(function()
-            hrp.CFrame = faceCF
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end)
-        firePrompt()
-        firePrompt()
-        firePrompt()
-        spamETaps(eSpamPerBeat)
-        Services.RunService.Heartbeat:Wait()
-    end
-
-    pcall(function()
-        hrp.Anchored = origAnchored
-        hum.PlatformStand = origPlatform
-        hum.AutoRotate = origAuto
-        hrp.CFrame = faceCF
-        hrp.AssemblyLinearVelocity = Vector3.zero
-        hrp.AssemblyAngularVelocity = Vector3.zero
-    end)
-    Services.RunService.Heartbeat:Wait()
-
-    firePrompt()
-    firePrompt()
-    firePrompt()
-    spamETaps(math.min(eSpamPerBeat * 2, 60))
-
-    pcall(function()
-        prompt.HoldDuration = origHold
-        prompt.MaxActivationDistance = origMaxDist
-        if origLOS ~= nil then
-            prompt.RequiresLineOfSight = origLOS
-        end
-    end)
-
-    hrp.AssemblyLinearVelocity = Vector3.zero
-    hrp.AssemblyAngularVelocity = Vector3.zero
-
-    if not g.SakuraBuyersSkipReturnSnap then
-        local returnDelay = 0.06 + math.min(distToNPC * 0.002, 0.45)
-        task.wait(returnDelay)
-        if hrp and hrp.Parent and originalCF then
-            hrp.CFrame = originalCF
-            hrp.AssemblyLinearVelocity = Vector3.zero
-        end
-    end
-end
-
-local function BuyerExecute(sel)
-    task.spawn(function()
-        local g = getgenv and getgenv() or _G
-        local lootFolder = (type(g.SakuraMiscLootBuyerFolder) == "string" and g.SakuraMiscLootBuyerFolder ~= "" and g.SakuraMiscLootBuyerFolder)
-            or "LootBuyer"
-        local gunFolder = (type(g.SakuraMiscGunBuyerFolder) == "string" and g.SakuraMiscGunBuyerFolder ~= "" and g.SakuraMiscGunBuyerFolder)
-            or "GunBuyer"
-        local folderName = nil
-        if sel == "Loot Buyer" then
-            folderName = lootFolder
-        elseif sel == "Gun Buyer" then
-            folderName = gunFolder
-        end
-        if not folderName then
-            return
-        end
-        local tryExtra = (sel == "Loot Buyer" and g.SakuraMiscLootBuyerTryNames)
-            or (sel == "Gun Buyer" and g.SakuraMiscGunBuyerTryNames)
-        local pr = nil
-        for _ = 1, 15 do
-            pr = FindMiscBuyerHandler(folderName)
-            if not pr and type(tryExtra) == "table" then
-                for _, alt in ipairs(tryExtra) do
-                    if type(alt) == "string" and alt ~= "" then
-                        pr = FindMiscBuyerHandler(alt)
-                        if pr then
-                            break
-                        end
-                    end
-                end
-            end
-            if pr then
-                break
-            end
-            task.wait(0.15)
-        end
-        if not pr then
-            warn(
-                "[Sakura Buyers] No Handler prompt for "
-                    .. folderName
-                    .. " (expected workspace.Map.Misc."
-                    .. folderName
-                    .. ".UpperTorso.Handler ProximityPrompt)."
-            )
-            return
-        end
-        BuyerTeleportAndPress(pr)
-    end)
-end
 
 local InstantSec = EliteLib:CreateSection(InstantPg, "Instant UI")
 -- Inline controls (hidden when "Pop Out Remote" opens the separate HUD; empty InstantHUDDisplay did nothing)
@@ -7912,84 +7355,6 @@ for _, child in ipairs(RemoteCont:GetChildren()) do
     end
 end
 
-local BuyersSec = EliteLib:CreateSection(BuyersPg, "Buyers")
-local BuyersInline = Instance.new("Frame", BuyersSec)
-BuyersInline.Name = "BuyersInline"
-BuyersInline.BackgroundTransparency = 1
-BuyersInline.BorderSizePixel = 0
-BuyersInline.Size = UDim2.new(1, 0, 0, 0)
-BuyersInline.AutomaticSize = Enum.AutomaticSize.Y
-BuyersInline.ZIndex = 21
-local buyersInlineList = Instance.new("UIListLayout", BuyersInline)
-buyersInlineList.FillDirection = Enum.FillDirection.Vertical
-buyersInlineList.SortOrder = Enum.SortOrder.LayoutOrder
-buyersInlineList.Padding = UDim.new(0, 12)
-local selBuyer = "Loot Buyer"
-local _syncingBuyer = false
-local function SyncBuyerDropdown(val, source)
-    if _syncingBuyer then
-        return
-    end
-    _syncingBuyer = true
-    selBuyer = val
-    if source ~= "menu" then
-        local e = EliteLib.Elements["BuyersUI_Dropdown"]
-        if e and e.Set then
-            e.Set(val)
-        end
-    end
-    if source ~= "hud" then
-        local e = EliteLib.Elements["BuyersHUD_Dropdown"]
-        if e and e.Set then
-            e.Set(val)
-        end
-    end
-    _syncingBuyer = false
-end
-local popOutBuyersToggle = EliteLib:CreateToggle(BuyersSec, "Pop Out Buyer", function(s)
-    if s then
-        AnimateHUDOpen(BuyersHUD)
-    else
-        AnimateHUDClose(BuyersHUD)
-    end
-    BuyersInline.Visible = not s
-end, "Buyers_Pop_Out")
-if popOutBuyersToggle then
-    popOutBuyersToggle.LayoutOrder = 1
-end
-BuyersInline.LayoutOrder = 2
-local buyerMainBtn
-buyerMainBtn = EliteLib:CreateButton(BuyersInline, "Open Selected Menu", function()
-    task.spawn(function()
-        BuyerExecute(selBuyer)
-    end)
-end)
-EliteLib:CreateDropdown(BuyersInline, "Target Interface", { "Loot Buyer", "Gun Buyer" }, function(val)
-    SyncBuyerDropdown(val, "menu")
-end, buyerMainBtn, "BuyersUI_Dropdown")
-local buyerHudBtn = EliteLib:CreateButton(BuyersCont, "Open Selected Menu", function()
-    task.spawn(function()
-        BuyerExecute(selBuyer)
-    end)
-end)
-buyerHudBtn.LayoutOrder = 1
-buyerHudBtn.Size = UDim2.new(1, -2 * REMOTE_DROPDOWN_H_MARGIN, 0, 50)
-local bListLayout = BuyersCont:FindFirstChildOfClass("UIListLayout")
-if bListLayout then
-    bListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-end
-local bContPad = BuyersCont:FindFirstChildOfClass("UIPadding")
-if bContPad then
-    bContPad.PaddingTop = UDim.new(0, 8)
-end
-EliteLib:CreateDropdown(BuyersCont, "Target Interface", { "Loot Buyer", "Gun Buyer" }, function(val)
-    SyncBuyerDropdown(val, "hud")
-end, buyerHudBtn, "BuyersHUD_Dropdown", REMOTE_DROPDOWN_H_MARGIN)
-for _, child in ipairs(BuyersCont:GetChildren()) do
-    if child.Name == "DropdownItem" then
-        child.LayoutOrder = 2
-    end
-end
 end
 SakuraSetupInstantRemoteSection()
 
@@ -8114,6 +7479,18 @@ end
 EliteLib:CreateToggle(UISec, "Show Stats Bar", function(s)
     if s then AnimateHUDOpen(StatsBarHUD) else AnimateHUDClose(StatsBarHUD) end
 end, "StatsBar_Toggle")
+
+EliteLib:CreateToggle(UISec, "Show Mobile UI Key", function(s)
+    if MenuOpenChip then
+        MenuOpenChip.Visible = s
+    end
+end, "MenuOpenChip_Toggle")
+do
+    local el = EliteLib.Elements["MenuOpenChip_Toggle"]
+    if el and el.Set then
+        el.Set(true)
+    end
+end
 
 EliteLib:CreateToggle(UISec, "Instant Interact", function(s)
     applyInstantInteract(s)
@@ -8248,7 +7625,7 @@ EliteLib:CreateToggle(CoreSettingsSec, "Full Bright", function(s)
             getgenv().SakuraFullBrightSet(s)
         end
     end)
-end, "Settings_FullBright", "Saves Lighting; restores when toggled off.")
+end, "Settings_FullBright")
 
 do
     local lagActive = false
@@ -8386,7 +7763,7 @@ EliteLib:CreateToggle(CoreSettingsSec, "Anti-Lag", function(s)
             getgenv().SakuraAntiLagSet(s)
         end
     end)
-end, "Settings_AntiLag", "Lowers quality and disables heavy effects; restores when toggled off.")
+end, "Settings_AntiLag")
 getgenv().SakuraThemeSubpageSectionHostsByTab = {
     Aim = { aimPageAimbot, aimPageSilent },
     Visual = { visualPagePlayer, visualPageNpc, visualPagePrinter },
@@ -9162,6 +8539,7 @@ CFGScroll.ScrollBarThickness = 2
 CFGScroll.ScrollBarImageColor3 = Themes[CurrentTheme].Accent
 CFGScroll.ZIndex = 22
 CFGScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+applySakuraScrollFrameFeel(CFGScroll, { direction = Enum.ScrollingDirection.Y })
 getgenv().CFGListScroll = CFGScroll
 Instance.new("UIListLayout", CFGScroll).Padding = UDim.new(0,5)
 local CFGScrollPad = Instance.new("UIPadding", CFGScroll)
@@ -10925,7 +10303,7 @@ local function anyHUDPanelAnimating()
     if ScannerInlineAnimating then
         return true
     end
-    for _, h in ipairs({ ScannerHUD, RemoteHUD, BuyersHUD, SpectateHUD, StatsBarHUD, WhitelistPanel }) do
+    for _, h in ipairs({ ScannerHUD, RemoteHUD, SpectateHUD, StatsBarHUD, WhitelistPanel }) do
         if h and HUDAnimating[h] then return true end
     end
     local wm = getgenv().SpectateWatermarkRef
@@ -10938,181 +10316,274 @@ end
 
 getgenv().SakuraAnyHudPanelAnimating = anyHUDPanelAnimating
 
--- First menu open from the floating chip: chip collapse runs with the menu open tween, then it reopens once at the secondary slot (no second tap).
-local SakuraMenuChipRelocated = false
+-- Menu shell / chip intro: own scope (Luau ~200 locals per chunk; keeps main script under the limit).
+local SakuraMenuShell = (function()
+    local SakuraMenuChipRelocated = false
+    local menuShellSizeTween = nil
+    local menuShellFadeTween = nil
+    local menuAnimGeneration = 0
 
-local function menuBackdropFadeTarget()
-    if CurrentTheme == "Lofi" and LofiBG then
-        return LofiBG, "ImageTransparency"
+    local function menuBackdropFadeTarget()
+        if CurrentTheme == "Lofi" and LofiBG then
+            return LofiBG, "ImageTransparency"
+        end
+        return BaseBG, "BackgroundTransparency"
     end
-    return BaseBG, "BackgroundTransparency"
-end
 
-local function hideMainMenuAnimated()
-    if isAnimating then return end
-    while anyHUDPanelAnimating() do
-        task.wait()
+    local function menuOpenChipShouldShow()
+        return EliteLib.Flags["MenuOpenChip_Toggle"] ~= false
     end
-    if not MainFrame.Visible then return end
-    isAnimating = true
 
-    -- Only the whitelist panel is tied to main-menu open/close; other HUD pop-outs stay as the user left them.
-    if WhitelistPanel and WhitelistPanel.Visible and not HUDAnimating[WhitelistPanel] then
-        task.spawn(function()
-            AnimateHUDClose(WhitelistPanel)
+    local function cancelMenuShellTweens()
+        if menuShellSizeTween then
+            pcall(function()
+                menuShellSizeTween:Cancel()
+            end)
+            menuShellSizeTween = nil
+        end
+        if menuShellFadeTween then
+            pcall(function()
+                menuShellFadeTween:Cancel()
+            end)
+            menuShellFadeTween = nil
+        end
+    end
+
+    local function hideMainMenuAnimated(onDone)
+        if not MainFrame.Visible then
+            if onDone then
+                task.defer(onDone)
+            end
+            return
+        end
+        cancelMenuShellTweens()
+        menuAnimGeneration = menuAnimGeneration + 1
+        local gen = menuAnimGeneration
+        isAnimating = true
+
+        local fadeInst, fadeProp = menuBackdropFadeTarget()
+        MainFrame.ClipsDescendants = true
+        -- One frame so AbsolutePosition/AbsoluteSize are valid for ScreenGui children (whitelist, watermark, chip).
+        Services.RunService.Heartbeat:Wait()
+
+        local sizeTween = Services.Tween:Create(MainFrame, TWEEN_SHELL_CLOSE, { Size = UDim2.new(0, 0, 0, 0) })
+        local fadeTween = Services.Tween:Create(fadeInst, TWEEN_SHELL_CLOSE, { [fadeProp] = 1 })
+        menuShellSizeTween = sizeTween
+        menuShellFadeTween = fadeTween
+        sizeTween:Play()
+        fadeTween:Play()
+
+        local function closeHudForMenuShell(hud)
+            if hud and hud:IsA("GuiObject") and hud.Visible then
+                AnimateHUDClose(hud, TWEEN_SHELL_CLOSE, true)
+            end
+        end
+        closeHudForMenuShell(WhitelistPanel)
+        closeHudForMenuShell(StatsBarHUD)
+        local wmClose = getgenv().SpectateWatermarkRef
+        if wmClose then
+            local wfn = getgenv().SakuraAnimateWatermarkClose
+            if type(wfn) == "function" then
+                wfn(TWEEN_SHELL_CLOSE)
+            else
+                closeHudForMenuShell(wmClose)
+            end
+        end
+
+        if menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent and MenuOpenChip.Visible then
+            AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_CLOSE, true)
+        end
+
+        local finished = false
+        local function finishHide()
+            if finished or gen ~= menuAnimGeneration then
+                return
+            end
+            finished = true
+            MainFrame.Visible = false
+            MainFrame.Size = UDim2.new(0, MAIN_MENU_WIDTH, 0, 650)
+            MainFrame.ClipsDescendants = false
+            fadeInst[fadeProp] = 1
+            menuShellSizeTween = nil
+            menuShellFadeTween = nil
+            isAnimating = false
+            task.defer(function()
+                if menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+                    MenuOpenChip.Position = MenuOpenChipSecondaryPos
+                    pcall(getgenv().SakuraClampMenuOpenChipPosition)
+                    SakuraMenuChipRelocated = true
+                    AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
+                end
+                if onDone then
+                    task.defer(onDone)
+                end
+            end)
+        end
+
+        sizeTween.Completed:Connect(function(state)
+            if state ~= nil and state ~= Enum.PlaybackState.Completed then
+                return
+            end
+            if gen ~= menuAnimGeneration then
+                return
+            end
+            finishHide()
         end)
     end
 
-    MainFrame.ClipsDescendants = true
-    local fadeInst, fadeProp = menuBackdropFadeTarget()
-    local sizeTween = Services.Tween:Create(MainFrame, TweenInfo.new(MENU_CLOSE_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { Size = UDim2.new(0, 0, 0, 0) })
-    local fadeTween = Services.Tween:Create(fadeInst, TweenInfo.new(MENU_CLOSE_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.In), { [fadeProp] = 1 })
-    sizeTween:Play()
-    fadeTween:Play()
-    task.wait(MENU_CLOSE_TWEEN)
-        while anyHUDPanelAnimating() do
-            task.wait()
-    end
-    MainFrame.Visible = false
-    MainFrame.Size = UDim2.new(0, MAIN_MENU_WIDTH, 0, 650)
-    fadeInst[fadeProp] = 0
-
-    isAnimating = false
-end
-
-local function showMainMenuAnimated(fromMenuChip)
-    if isAnimating then return end
-    while anyHUDPanelAnimating() do
-        task.wait()
-    end
-    if MainFrame.Visible then return end
-    isAnimating = true
-
-    local doChipIntroRelocate = fromMenuChip and not SakuraMenuChipRelocated
-
-    MainFrame.Visible = true
-    MainFrame.Size = UDim2.new(0, 0, 0, 0)
-    MainFrame.ClipsDescendants = true
-    local fadeInst, fadeProp = menuBackdropFadeTarget()
-    fadeInst[fadeProp] = 1
-    local sizeTween = Services.Tween:Create(MainFrame, TweenInfo.new(MENU_OPEN_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { Size = UDim2.new(0, MAIN_MENU_WIDTH, 0, 650) })
-    local fadeTween = Services.Tween:Create(fadeInst, TweenInfo.new(MENU_OPEN_TWEEN, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), { [fadeProp] = 0 })
-    sizeTween:Play()
-    fadeTween:Play()
-    -- Same duration / easing family as HUD panels: chip shrink matches the menu shell opening (first chip-open only).
-    if doChipIntroRelocate and MenuOpenChip and MenuOpenChip.Parent then
-        AnimateHUDClose(MenuOpenChip)
-    end
-
-    sizeTween.Completed:Connect(function()
-        MainFrame.ClipsDescendants = false
-        isAnimating = false
-        if doChipIntroRelocate and MenuOpenChip and MenuOpenChip.Parent then
-            task.spawn(function()
-                while HUDAnimating[MenuOpenChip] do
-                    task.wait()
-                end
-                MenuOpenChip.Position = MenuOpenChipSecondaryPos
-                pcall(clampMenuOpenChipPosition)
-                SakuraMenuChipRelocated = true
-                AnimateHUDOpen(MenuOpenChip)
-            end)
+    local function showMainMenuAnimated(fromMenuChip)
+        if MainFrame.Visible and MainFrame.Size.X.Offset >= MAIN_MENU_WIDTH - 2 and MainFrame.Size.Y.Offset >= 648 then
+            isAnimating = false
+            return
         end
-    end)
-end
+        cancelMenuShellTweens()
+        menuAnimGeneration = menuAnimGeneration + 1
+        local gen = menuAnimGeneration
+        isAnimating = true
 
-local function pointOnMenuOpenChip(screenPos)
-	local ap = MenuOpenChip.AbsolutePosition
-	local asz = MenuOpenChip.AbsoluteSize
-	return screenPos.X >= ap.X and screenPos.X <= ap.X + asz.X and screenPos.Y >= ap.Y and screenPos.Y <= ap.Y + asz.Y
-end
+        local doChipIntroRelocate = fromMenuChip and not SakuraMenuChipRelocated
 
-local function clampMenuOpenChipPosition()
-	local cam = workspace.CurrentCamera
-	if not cam or not MenuOpenChip.Parent then
-		return
-	end
-	local vs = cam.ViewportSize
-	local m = 6
-	local w = MenuOpenChip.Size.X.Offset
-	local h = MenuOpenChip.Size.Y.Offset
-	local p = MenuOpenChip.Position
-	local x = math.clamp(p.X.Offset, m, math.max(m, vs.X - w - m))
-	local topY = p.Y.Scale * vs.Y + p.Y.Offset
-	topY = math.clamp(topY, m, math.max(m, vs.Y - h - m))
-	MenuOpenChip.Position = UDim2.new(p.X.Scale, x, p.Y.Scale, topY - p.Y.Scale * vs.Y)
-end
+        MainFrame.Visible = true
+        MainFrame.Size = UDim2.new(0, 0, 0, 0)
+        MainFrame.ClipsDescendants = true
+        Services.RunService.Heartbeat:Wait()
+        local fadeInst, fadeProp = menuBackdropFadeTarget()
+        fadeInst[fadeProp] = 1
+        local sizeTween = Services.Tween:Create(MainFrame, TWEEN_SHELL_OPEN, { Size = UDim2.new(0, MAIN_MENU_WIDTH, 0, 650) })
+        local fadeTween = Services.Tween:Create(fadeInst, TWEEN_SHELL_OPEN, { [fadeProp] = 0 })
+        menuShellSizeTween = sizeTween
+        menuShellFadeTween = fadeTween
+        if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+            AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_OPEN_SHRINK)
+        end
+        sizeTween:Play()
+        fadeTween:Play()
 
-local chipDrag = {
-	active = false,
-	input = nil,
-	pressScreen = nil,
-	startPos = nil,
-}
-local CHIP_DRAG_SLOP = 10
+        sizeTween.Completed:Connect(function(state)
+            if state ~= nil and state ~= Enum.PlaybackState.Completed then
+                return
+            end
+            if gen ~= menuAnimGeneration then
+                return
+            end
+            MainFrame.ClipsDescendants = false
+            menuShellSizeTween = nil
+            menuShellFadeTween = nil
+            isAnimating = false
+            if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+                task.defer(function()
+                    if not menuOpenChipShouldShow() then
+                        return
+                    end
+                    MenuOpenChip.Position = MenuOpenChipSecondaryPos
+                    pcall(getgenv().SakuraClampMenuOpenChipPosition)
+                    SakuraMenuChipRelocated = true
+                    AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
+                end)
+            end
+        end)
+    end
 
-ConnectCore("SakuraMenuChipPointer", Services.UIS.InputBegan, function(input)
-	if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
-		return
-	end
-	if not pointOnMenuOpenChip(Vector2.new(input.Position.X, input.Position.Y)) then
-		return
-	end
-	chipDrag.active = true
-	chipDrag.input = input
-	chipDrag.pressScreen = Vector2.new(input.Position.X, input.Position.Y)
-	chipDrag.startPos = MenuOpenChip.Position
-end)
+    return {
+        hide = hideMainMenuAnimated,
+        show = showMainMenuAnimated,
+        backdropFadeTarget = menuBackdropFadeTarget,
+    }
+end)()
 
-ConnectCore("SakuraMenuChipMove", Services.UIS.InputChanged, function(input)
-	if not chipDrag.active or not chipDrag.input then
-		return
+;(function()
+	local function pointOnMenuOpenChip(screenPos)
+		local ap = MenuOpenChip.AbsolutePosition
+		local asz = MenuOpenChip.AbsoluteSize
+		return screenPos.X >= ap.X and screenPos.X <= ap.X + asz.X and screenPos.Y >= ap.Y and screenPos.Y <= ap.Y + asz.Y
 	end
-	local isMouseDrag = chipDrag.input.UserInputType == Enum.UserInputType.MouseButton1
-		and input.UserInputType == Enum.UserInputType.MouseMovement
-	local isTouchDrag = chipDrag.input == input and input.UserInputType == Enum.UserInputType.Touch
-	if not isMouseDrag and not isTouchDrag then
-		return
-	end
-	if isMouseDrag and not Services.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
-		return
-	end
-	local cur = Vector2.new(input.Position.X, input.Position.Y)
-	local delta = cur - chipDrag.pressScreen
-	if delta.Magnitude <= CHIP_DRAG_SLOP then
-		return
-	end
-	MenuOpenChip.Position = UDim2.new(
-		chipDrag.startPos.X.Scale,
-		chipDrag.startPos.X.Offset + delta.X,
-		chipDrag.startPos.Y.Scale,
-		chipDrag.startPos.Y.Offset + delta.Y
-	)
-end)
 
-ConnectCore("SakuraMenuChipRelease", Services.UIS.InputEnded, function(input)
-	if not chipDrag.active or chipDrag.input ~= input then
-		return
-	end
-	local startP = chipDrag.pressScreen
-	chipDrag.active = false
-	chipDrag.input = nil
-	chipDrag.pressScreen = nil
-	chipDrag.startPos = nil
-	local endP = Vector2.new(input.Position.X, input.Position.Y)
-	if (endP - startP).Magnitude <= CHIP_DRAG_SLOP + 2 then
-		if isAnimating then
+	local function clampMenuOpenChipPosition()
+		local cam = workspace.CurrentCamera
+		if not cam or not MenuOpenChip.Parent then
 			return
 		end
-		if MainFrame.Visible then
-			hideMainMenuAnimated()
-		else
-			showMainMenuAnimated(true)
-		end
-	else
-		clampMenuOpenChipPosition()
+		local vs = cam.ViewportSize
+		local m = 6
+		local w = MenuOpenChip.Size.X.Offset
+		local h = MenuOpenChip.Size.Y.Offset
+		local p = MenuOpenChip.Position
+		local x = math.clamp(p.X.Offset, m, math.max(m, vs.X - w - m))
+		local topY = p.Y.Scale * vs.Y + p.Y.Offset
+		topY = math.clamp(topY, m, math.max(m, vs.Y - h - m))
+		MenuOpenChip.Position = UDim2.new(p.X.Scale, x, p.Y.Scale, topY - p.Y.Scale * vs.Y)
 	end
-end)
+
+	getgenv().SakuraClampMenuOpenChipPosition = clampMenuOpenChipPosition
+
+	local chipDrag = {
+		active = false,
+		input = nil,
+		pressScreen = nil,
+		startPos = nil,
+	}
+	local CHIP_DRAG_SLOP = 10
+
+	ConnectCore("SakuraMenuChipPointer", Services.UIS.InputBegan, function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then
+			return
+		end
+		if not pointOnMenuOpenChip(Vector2.new(input.Position.X, input.Position.Y)) then
+			return
+		end
+		chipDrag.active = true
+		chipDrag.input = input
+		chipDrag.pressScreen = Vector2.new(input.Position.X, input.Position.Y)
+		chipDrag.startPos = MenuOpenChip.Position
+	end)
+
+	ConnectCore("SakuraMenuChipMove", Services.UIS.InputChanged, function(input)
+		if not chipDrag.active or not chipDrag.input then
+			return
+		end
+		local isMouseDrag = chipDrag.input.UserInputType == Enum.UserInputType.MouseButton1
+			and input.UserInputType == Enum.UserInputType.MouseMovement
+		local isTouchDrag = chipDrag.input == input and input.UserInputType == Enum.UserInputType.Touch
+		if not isMouseDrag and not isTouchDrag then
+			return
+		end
+		if isMouseDrag and not Services.UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) then
+			return
+		end
+		local cur = Vector2.new(input.Position.X, input.Position.Y)
+		local delta = cur - chipDrag.pressScreen
+		if delta.Magnitude <= CHIP_DRAG_SLOP then
+			return
+		end
+		MenuOpenChip.Position = UDim2.new(
+			chipDrag.startPos.X.Scale,
+			chipDrag.startPos.X.Offset + delta.X,
+			chipDrag.startPos.Y.Scale,
+			chipDrag.startPos.Y.Offset + delta.Y
+		)
+	end)
+
+	ConnectCore("SakuraMenuChipRelease", Services.UIS.InputEnded, function(input)
+		if not chipDrag.active or chipDrag.input ~= input then
+			return
+		end
+		local startP = chipDrag.pressScreen
+		chipDrag.active = false
+		chipDrag.input = nil
+		chipDrag.pressScreen = nil
+		chipDrag.startPos = nil
+		local endP = Vector2.new(input.Position.X, input.Position.Y)
+		if (endP - startP).Magnitude <= CHIP_DRAG_SLOP + 2 then
+			if MainFrame.Visible then
+				SakuraMenuShell.hide()
+			else
+				SakuraMenuShell.show(true)
+			end
+		else
+			pcall(getgenv().SakuraClampMenuOpenChipPosition)
+		end
+	end)
+end)()
 
 -- Luau limits ~200 locals per function scope (the implicit script body is one scope). Wrapping big regions in
 -- `;(function() ... end)()` gives each chunk its own local register pool (same pattern as Modern ESP below).
@@ -11128,6 +10599,144 @@ local FPSAccumulator = 0
 local FPSFrames = 0
 local PingStatAccum = 0
 local LastSessionSec = -1
+local LuarmorHudAccum = 0
+local LrmMirrorLeft = nil
+local LrmMirrorTick = nil
+
+local function luarmorReadGlobal(key)
+	local g = getgenv()
+	local v = rawget(g, key)
+	if v == nil and _G then
+		v = rawget(_G, key)
+	end
+	return v
+end
+
+local function luarmorRuntimeDetected()
+	return luarmorReadGlobal("LRM_SecondsLeft") ~= nil
+		or luarmorReadGlobal("LRM_IsUserPremium") ~= nil
+		or luarmorReadGlobal("LRM_UserNote") ~= nil
+		or luarmorReadGlobal("LRM_ScriptName") ~= nil
+end
+
+local function formatLuarmorDuration(sec)
+	if sec == nil or type(sec) ~= "number" or sec ~= sec then
+		return nil
+	end
+	if sec >= 1e200 or sec == math.huge then
+		return "Lifetime"
+	end
+	sec = math.floor(math.max(0, sec))
+	local d = math.floor(sec / 86400)
+	sec -= d * 86400
+	local h = math.floor(sec / 3600)
+	sec -= h * 3600
+	local m = math.max(0, math.floor(sec / 60))
+	if d > 0 then
+		return string.format("%dd %dh", d, h)
+	end
+	if h > 0 then
+		return string.format("%dh %dm", h, m)
+	end
+	if m > 0 then
+		return string.format("%dm", m)
+	end
+	return "<1m"
+end
+
+local function formatLuarmorDurationVerbose(sec)
+	if sec == nil or type(sec) ~= "number" or sec ~= sec then
+		return "—"
+	end
+	if sec >= 1e200 or sec == math.huge then
+		return "Lifetime"
+	end
+	sec = math.floor(math.max(0, sec))
+	local d = math.floor(sec / 86400)
+	sec -= d * 86400
+	local h = math.floor(sec / 3600)
+	sec -= h * 3600
+	local m = math.floor(sec / 60)
+	local s = sec % 60
+	if d > 0 then
+		return string.format("%d Day%s %d Hrs %dMins %ds", d, (d == 1 and "" or "s"), h, m, s)
+	end
+	return string.format("%d Hrs %dMins %ds", h, m, s)
+end
+
+local function luarmorKeyTypeLabel()
+	local prem = luarmorReadGlobal("LRM_IsUserPremium")
+	local note = luarmorReadGlobal("LRM_UserNote")
+	if type(note) == "string" and note ~= "" and note ~= "Not specified" then
+		if prem == true then
+			return "Premium · " .. note
+		elseif prem == false then
+			return "Standard · " .. note
+		end
+		return note
+	end
+	if prem == true then
+		return "Premium"
+	end
+	if prem == false then
+		return "Standard"
+	end
+	return "Standard"
+end
+
+local function luarmorKeyTypeColumnText()
+	local note = luarmorReadGlobal("LRM_UserNote")
+	if type(note) == "string" and note ~= "" and note ~= "Not specified" then
+		return note
+	end
+	return luarmorKeyTypeLabel()
+end
+
+local function refreshLuarmorStatsHud()
+	local keyV = getgenv().SakuraHomeLuarmorKeyValue
+	local durV = getgenv().SakuraHomeLuarmorDurationValue
+	if HomeLuarmorFooter then
+		HomeLuarmorFooter.Visible = false
+	end
+	if not (keyV and durV) then
+		return
+	end
+
+	local show = (CurrentTab == "Home") and MainFrame and MainFrame.Visible
+	if not show then
+		keyV.Text = "—"
+		durV.Text = "—"
+		return
+	end
+
+	if not luarmorRuntimeDetected() then
+		keyV.Text = "—"
+		durV.Text = "—"
+		return
+	end
+
+	local raw = luarmorReadGlobal("LRM_SecondsLeft")
+	local eff = raw
+	if type(raw) == "number" and raw == raw and raw < 1e200 and raw ~= math.huge then
+		local projected = nil
+		if LrmMirrorLeft ~= nil and LrmMirrorTick ~= nil then
+			projected = math.max(0, LrmMirrorLeft - (tick() - LrmMirrorTick))
+		end
+		if LrmMirrorLeft == nil or projected == nil or math.abs(raw - projected) > 90 then
+			LrmMirrorLeft = raw
+			LrmMirrorTick = tick()
+		end
+		eff = math.max(0, LrmMirrorLeft - (tick() - LrmMirrorTick))
+	end
+
+	local kt = luarmorKeyTypeColumnText()
+	keyV.Text = string.format('"%s"', kt)
+	if type(eff) == "number" and eff == eff then
+		durV.Text = string.format('"%s"', formatLuarmorDurationVerbose(eff))
+	else
+		durV.Text = "—"
+	end
+end
 
 local function setStatText(card, cardField, hudLabel, text)
     if card and card:FindFirstChild(cardField) then
@@ -11195,6 +10804,12 @@ ConnectCore("PremiumStatsUpdater", Services.RunService.Heartbeat, function(dt)
     if elapsed ~= LastSessionSec then
         LastSessionSec = elapsed
         setStatText(SessionCard, "Value", SessionValue, string.format("%d:%02d", math.floor(elapsed / 60), elapsed % 60))
+    end
+
+    LuarmorHudAccum += dt
+    if LuarmorHudAccum >= 0.5 then
+        LuarmorHudAccum = 0
+        pcall(refreshLuarmorStatsHud)
     end
 end)
 
@@ -11430,7 +11045,6 @@ local function CleanupFeatures()
     pcall(function()
         ScannerHUD.Visible = false
         RemoteHUD.Visible = false
-        BuyersHUD.Visible = false
         SpectateHUD.Visible = false
         StatsBarHUD.Visible = false
         WhitelistPanel.Visible = false
@@ -11440,17 +11054,18 @@ end
 CloseBtn.MouseButton1Click:Connect(function()
     task.spawn(function()
         pcall(function()
-            while isAnimating or anyHUDPanelAnimating() do
-                task.wait()
+            local function afterMenuCloseOrNoMenu()
+                if getgenv().SakuraShouldResetSpectateAfterClose and getgenv().SakuraShouldResetSpectateAfterClose() and getgenv().SakuraResetSpectateView then
+                    getgenv().SakuraResetSpectateView()
+                end
+                if _G.EliteHubV2_Cleanup then
+                    _G.EliteHubV2_Cleanup()
+                end
             end
             if MainFrame.Visible then
-                hideMainMenuAnimated()
-            end
-            if getgenv().SakuraShouldResetSpectateAfterClose and getgenv().SakuraShouldResetSpectateAfterClose() and getgenv().SakuraResetSpectateView then
-                getgenv().SakuraResetSpectateView()
-            end
-            if _G.EliteHubV2_Cleanup then
-                _G.EliteHubV2_Cleanup()
+                SakuraMenuShell.hide(afterMenuCloseOrNoMenu)
+            else
+                afterMenuCloseOrNoMenu()
             end
         end)
     end)
@@ -11473,6 +11088,16 @@ _G.EliteHubV2_Cleanup = function()
     end)
 end
 
+getgenv().SakuraRefreshHomeLuarmorFooter = refreshLuarmorStatsHud
+task.defer(function()
+	pcall(function()
+		local fn = getgenv().SakuraRefreshHomeLuarmorFooter
+		if type(fn) == "function" then
+			fn()
+		end
+	end)
+end)
+
 end)()
 
 getgenv().AutoESP = getgenv().AutoESP or false
@@ -11483,7 +11108,6 @@ getgenv().NpcESP_Chams = getgenv().NpcESP_Chams or false
 getgenv().NpcESP_ShowNames = getgenv().NpcESP_ShowNames or false
 getgenv().NpcESP_ShowDistance = getgenv().NpcESP_ShowDistance or false
 getgenv().NpcESP_ShowHealth = getgenv().NpcESP_ShowHealth or false
-getgenv().SakuraEspPreviewNonVisible = getgenv().SakuraEspPreviewNonVisible or false
 getgenv().CryptoNumberColor = getgenv().CryptoNumberColor or "rgb(255,255,255)"
 
 ;(function() -- crypto / smart trader: own local scope (Luau ~200 locals per function)
@@ -12497,7 +12121,7 @@ MainFrame.Visible = false
 MainFrame.Size = UDim2.new(0, MAIN_MENU_WIDTH, 0, 650)
 MainFrame.ClipsDescendants = false
 ;(function()
-local introFadeInst, introFadeProp = menuBackdropFadeTarget()
+local introFadeInst, introFadeProp = SakuraMenuShell.backdropFadeTarget()
 	introFadeInst[introFadeProp] = 0
 end)()
 
@@ -12505,11 +12129,10 @@ ConnectCore("MenuKeybind", Services.UIS.InputBegan, function(i, p)
     if p then return end
     if not MenuKeybind then return end
     if not (i.KeyCode == MenuKeybind or i.UserInputType == MenuKeybind) then return end
-    if isAnimating then return end
     if MainFrame.Visible then
-        hideMainMenuAnimated()
+        SakuraMenuShell.hide()
     else
-        showMainMenuAnimated(false)
+        SakuraMenuShell.show(false)
     end
 end)
 
