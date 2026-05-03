@@ -2769,6 +2769,11 @@ function ApplyTheme(name, fullUpdate, tabsOnly)
         end
     end)
     pcall(function()
+        if getgenv().UpdateFovAccentColor then
+            getgenv().UpdateFovAccentColor()
+        end
+    end)
+    pcall(function()
         if getgenv().SakuraAimSubTabRefreshTheme then
             getgenv().SakuraAimSubTabRefreshTheme()
         end
@@ -9866,6 +9871,16 @@ _G.GetEspColors = GetEspColors
 local function SakuraRegisterAimFovCamHooks()
 local FovPickThrottle = 0
 local FovPickCached = nil
+local FovAccentColor = Color3.fromRGB(255, 255, 255)
+
+-- Update FOV accent color when theme changes
+local function UpdateFovAccentColor()
+    local th = Themes[CurrentTheme]
+    FovAccentColor = (th and th.Accent) or Color3.fromRGB(255, 255, 255)
+end
+UpdateFovAccentColor()
+getgenv().UpdateFovAccentColor = UpdateFovAccentColor
+
 ConnectCore("FovCircleUpdate", Services.RunService.RenderStepped, function()
     if not (Settings.Fov and Settings.Fov.Enabled and Settings.Fov.Size and Settings.Fov.Size > 0 and not SakuraIsMainMenuCovering()) then
         aimbotFovGui.Enabled = false
@@ -9873,30 +9888,26 @@ ConnectCore("FovCircleUpdate", Services.RunService.RenderStepped, function()
         return
     end
     local mousePos = Services.UIS:GetMouseLocation()
-    do
-        local r = Settings.Fov.Size
-        local d = math.floor(r * 2 + 0.5)
-        aimbotFovRing.Size = UDim2.fromOffset(d, d)
-        aimbotFovRing.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
-        aimbotFovGui.Enabled = true
+    local r = Settings.Fov.Size
+    local d = math.floor(r * 2 + 0.5)
+    aimbotFovRing.Size = UDim2.fromOffset(d, d)
+    aimbotFovRing.Position = UDim2.fromOffset(mousePos.X, mousePos.Y)
+    aimbotFovGui.Enabled = true
 
-        FovPickThrottle += 1
-        -- Pick target at ~15–20 Hz: full aim pick + NPC resolve is heavy every frame.
-        if FovPickThrottle % 5 == 0 then
-            if Settings.Aim and Settings.Aim.NpcAimbot then
-                FovPickCached = ResolveNpcAimLockedCharacter()
-            else
-                FovPickCached = GetClosestTarget()
-            end
-        end
-        local pick = FovPickCached
-        local th = Themes[CurrentTheme]
-        local accent = (th and th.Accent) or Color3.fromRGB(255, 255, 255)
-        if pick then
-            aimbotFovStroke.Color = accent
+    FovPickThrottle += 1
+    -- Pick target at ~15–20 Hz: full aim pick + NPC resolve is heavy every frame.
+    if FovPickThrottle % 5 == 0 then
+        if Settings.Aim and Settings.Aim.NpcAimbot then
+            FovPickCached = ResolveNpcAimLockedCharacter()
         else
-            aimbotFovStroke.Color = Color3.fromRGB(255, 255, 255)
+            FovPickCached = GetClosestTarget()
         end
+    end
+    
+    if FovPickCached then
+        aimbotFovStroke.Color = FovAccentColor
+    else
+        aimbotFovStroke.Color = Color3.fromRGB(255, 255, 255)
     end
 end)
 
