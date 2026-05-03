@@ -10322,7 +10322,6 @@ local SakuraMenuShell = (function()
     local menuShellSizeTween = nil
     local menuShellFadeTween = nil
     local menuAnimGeneration = 0
-    local menuToggleDebounce = false
 
     local function menuBackdropFadeTarget()
         if CurrentTheme == "Lofi" and LofiBG then
@@ -10351,11 +10350,7 @@ local SakuraMenuShell = (function()
     end
 
     local function hideMainMenuAnimated(onDone)
-        if menuToggleDebounce then return end
-        menuToggleDebounce = true
-        task.delay(0.2, function()
-            menuToggleDebounce = false
-        end)
+        if isAnimating then return end
         
         if not MainFrame.Visible then
             if onDone then
@@ -10441,6 +10436,8 @@ local SakuraMenuShell = (function()
     end
 
     local function showMainMenuAnimated(fromMenuChip)
+        if isAnimating then return end
+        
         if MainFrame.Visible and MainFrame.Size.X.Offset >= MAIN_MENU_WIDTH - 2 and MainFrame.Size.Y.Offset >= 648 then
             isAnimating = false
             return
@@ -10470,10 +10467,9 @@ local SakuraMenuShell = (function()
         local fadeTween = Services.Tween:Create(fadeInst, TWEEN_SHELL_OPEN, { [fadeProp] = 0 })
         menuShellSizeTween = sizeTween
         menuShellFadeTween = fadeTween
-        -- REMOVED: MenuOpenChip should not be modified by keybind toggle
-        -- if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
-        --     AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_OPEN_SHRINK)
-        -- end
+        if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+            AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_OPEN_SHRINK)
+        end
         sizeTween:Play()
         fadeTween:Play()
 
@@ -10488,18 +10484,17 @@ local SakuraMenuShell = (function()
             menuShellSizeTween = nil
             menuShellFadeTween = nil
             isAnimating = false
-            -- REMOVED: MenuOpenChip should not be modified by keybind toggle
-            -- if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
-            --     task.defer(function()
-            --         if not menuOpenChipShouldShow() then
-            --             return
-            --         end
-            --         MenuOpenChip.Position = MenuOpenChipSecondaryPos
-            --         pcall(getgenv().SakuraClampMenuOpenChipPosition)
-            --         SakuraMenuChipRelocated = true
-            --         AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
-            --     end)
-            -- end
+            if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+                task.defer(function()
+                    if not menuOpenChipShouldShow() then
+                        return
+                    end
+                    MenuOpenChip.Position = MenuOpenChipSecondaryPos
+                    pcall(getgenv().SakuraClampMenuOpenChipPosition)
+                    SakuraMenuChipRelocated = true
+                    AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
+                end)
+            end
         end)
     end
 
