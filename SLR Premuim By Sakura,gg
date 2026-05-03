@@ -10322,6 +10322,7 @@ local SakuraMenuShell = (function()
     local menuShellSizeTween = nil
     local menuShellFadeTween = nil
     local menuAnimGeneration = 0
+    local menuToggleDebounce = false
 
     local function menuBackdropFadeTarget()
         if CurrentTheme == "Lofi" and LofiBG then
@@ -10350,6 +10351,12 @@ local SakuraMenuShell = (function()
     end
 
     local function hideMainMenuAnimated(onDone)
+        if menuToggleDebounce then return end
+        menuToggleDebounce = true
+        task.delay(0.2, function()
+            menuToggleDebounce = false
+        end)
+        
         if not MainFrame.Visible then
             if onDone then
                 task.defer(onDone)
@@ -10379,20 +10386,21 @@ local SakuraMenuShell = (function()
             end
         end
         closeHudForMenuShell(WhitelistPanel)
-        closeHudForMenuShell(StatsBarHUD)
-        local wmClose = getgenv().SpectateWatermarkRef
-        if wmClose then
-            local wfn = getgenv().SakuraAnimateWatermarkClose
-            if type(wfn) == "function" then
-                wfn(TWEEN_SHELL_CLOSE)
-            else
-                closeHudForMenuShell(wmClose)
-            end
-        end
+        -- closeHudForMenuShell(StatsBarHUD)  -- REMOVED: StatsBarHUD should not close with menu toggle
+        -- local wmClose = getgenv().SpectateWatermarkRef  -- REMOVED: wmClose should not close with menu toggle
+        -- if wmClose then
+        --     local wfn = getgenv().SakuraAnimateWatermarkClose
+        --     if type(wfn) == "function" then
+        --         wfn(TWEEN_SHELL_CLOSE)
+        --     else
+        --         closeHudForMenuShell(wmClose)
+        --     end
+        -- end
 
-        if menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent and MenuOpenChip.Visible then
-            AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_CLOSE, true)
-        end
+        -- REMOVED: MenuOpenChip should not be modified by keybind toggle
+        -- if menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent and MenuOpenChip.Visible then
+        --     AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_CLOSE, true)
+        -- end
 
         local finished = false
         local function finishHide()
@@ -10408,12 +10416,13 @@ local SakuraMenuShell = (function()
             menuShellFadeTween = nil
             isAnimating = false
             task.defer(function()
-                if menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
-                    MenuOpenChip.Position = MenuOpenChipSecondaryPos
-                    pcall(getgenv().SakuraClampMenuOpenChipPosition)
-                    SakuraMenuChipRelocated = true
-                    AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
-                end
+                -- REMOVED: MenuOpenChip should not be modified by keybind toggle
+                -- if menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+                --     MenuOpenChip.Position = MenuOpenChipSecondaryPos
+                --     pcall(getgenv().SakuraClampMenuOpenChipPosition)
+                --     SakuraMenuChipRelocated = true
+                --     AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
+                -- end
                 if onDone then
                     task.defer(onDone)
                 end
@@ -10461,9 +10470,10 @@ local SakuraMenuShell = (function()
         local fadeTween = Services.Tween:Create(fadeInst, TWEEN_SHELL_OPEN, { [fadeProp] = 0 })
         menuShellSizeTween = sizeTween
         menuShellFadeTween = fadeTween
-        if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
-            AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_OPEN_SHRINK)
-        end
+        -- REMOVED: MenuOpenChip should not be modified by keybind toggle
+        -- if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+        --     AnimateHUDClose(MenuOpenChip, TWEEN_SHELL_OPEN_SHRINK)
+        -- end
         sizeTween:Play()
         fadeTween:Play()
 
@@ -10478,17 +10488,18 @@ local SakuraMenuShell = (function()
             menuShellSizeTween = nil
             menuShellFadeTween = nil
             isAnimating = false
-            if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
-                task.defer(function()
-                    if not menuOpenChipShouldShow() then
-                        return
-                    end
-                    MenuOpenChip.Position = MenuOpenChipSecondaryPos
-                    pcall(getgenv().SakuraClampMenuOpenChipPosition)
-                    SakuraMenuChipRelocated = true
-                    AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
-                end)
-            end
+            -- REMOVED: MenuOpenChip should not be modified by keybind toggle
+            -- if doChipIntroRelocate and menuOpenChipShouldShow() and MenuOpenChip and MenuOpenChip.Parent then
+            --     task.defer(function()
+            --         if not menuOpenChipShouldShow() then
+            --             return
+            --         end
+            --         MenuOpenChip.Position = MenuOpenChipSecondaryPos
+            --         pcall(getgenv().SakuraClampMenuOpenChipPosition)
+            --         SakuraMenuChipRelocated = true
+            --         AnimateHUDOpen(MenuOpenChip, TWEEN_SHELL_OPEN)
+            --     end)
+            -- end
         end)
     end
 
